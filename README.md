@@ -1,29 +1,27 @@
-# GridWars
+# Dino Duel
 
-A pixel-art village-vs-village strategy game that runs entirely in the browser. No build step, no server.
+A fast 1 vs 1 platform fighter with mini dinosaurs. Runs in any browser on PC or phone; no build step, no server.
 
-- 500×500 world with nine biomes (plains, forest, desert, tundra, swamp, hills, peaks, shallows, deep water), each with its own movement speed, farm yield and resources.
-- Up to 4 villages. Each starts with a Town Hall, 2 Worker's Homes, a Storage and a Shop.
-- Point workers at trees, rocks, ore and berries; spend the haul in the Shop on farms, pens, homes, barracks, stables, walls, towers, docks and more.
-- Travel by foot, road, bridge, horse or boat. The peak of technology is steel weapons and armor.
-- Single player against 1–3 computer villages, or online multiplayer with a room code.
+- One hit kills. First to 10 round wins takes the match; a tie scores nothing.
+- 30 maps from small to large, random spawn points, a 3-2-1-GO countdown.
+- Both dinos start unarmed. 50 weapons drop onto platforms, from a twig up to the Dartling Gun.
+- Fall off the map and you're out. After 30 seconds, razors close in from the top and bottom.
+- Play a bot (Easy, Normal, Hard, Impossible) or a friend online with a room code.
 
 ## Play
 
-Open `index.html` in a browser, or host the folder on any static host (e.g. GitHub Pages).
-Multiplayer needs the page served over http(s) and an internet connection; it uses
-[PeerJS](https://peerjs.com) (bundled in `js/vendor`, MIT) and its free public broker to connect players directly.
-The host's browser runs the match, so the game ends for everyone if the host leaves.
+Open `index.html`, or host the folder on any static host. Online play needs the page served over
+http(s); it connects the two players directly using [PeerJS](https://peerjs.com) (bundled in `js/vendor`, MIT)
+and its free public broker. The host's browser runs the match.
 
-Press **?** in game for controls and the biome table.
+Keyboard: A/D or arrows to move, W / Up / Space to jump (twice for a double jump), J / F / Enter to attack.
+Phone: hold it sideways; move pad on the left, attack and jump on the right.
 
 ## Code
 
 | File | Purpose |
 | --- | --- |
-| `js/data.js` | Biomes, buildings, units, costs |
-| `js/map.js` | Seeded world generation |
-| `js/sim.js` | Game rules, pathfinding, computer players, snapshots |
-| `js/sprites.js` | Procedurally drawn pixel art |
-| `js/net.js` | Peer-to-peer multiplayer |
-| `js/client.js` | Rendering, input, HUD, menus |
+| `js/data.js` | Tuning constants, the 50 weapons, the 30 maps, bot difficulty settings |
+| `js/sim.js` | Physics, weapons, round flow, sudden death, bot AI, network snapshots |
+| `js/client.js` | Drawing and animation, keyboard and touch input, menus |
+| `js/net.js` | Online play |

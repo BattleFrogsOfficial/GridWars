@@ -1,7 +1,7 @@
 'use strict';
-// ---------- Peer-to-peer multiplayer (host-authoritative, via PeerJS / WebRTC) ----------
-const Net = { mode: 'none', peer: null, conns: [], conn: null, code: '', name: '', buf: { e: [], fx: [], msg: [] }, onLobby: null, onError: null };
-const PEER_PREFIX = 'gridwars-v1-';
+// ---------- Online 1 vs 1 (host-authoritative, WebRTC via PeerJS) ----------
+const Net = { mode: 'none', peer: null, conn: null, code: '', fxBuf: [], onError: null, onOpen: null };
+const PEER_PREFIX = 'dinoduel-v1-';
 function loadPeer() {
   return new Promise((res, rej) => {
     if (window.Peer) return res();
@@ -10,60 +10,39 @@ function loadPeer() {
     document.head.appendChild(s);
   });
 }
-function lobbyList() { return [Net.name].concat(Net.conns.map(c => c.pname)); }
-function sendLobby() { const l = lobbyList(); for (const c of Net.conns) c.send({ t: 'lobby', players: l }); if (Net.onLobby) Net.onLobby(l); }
-async function netHost(name) {
-  await loadPeer();
-  Net.mode = 'host'; Net.name = name; Net.conns = [];
+function netClose() { try { if (Net.peer) Net.peer.destroy(); } catch (e) { } Net.peer = Net.conn = null; Net.mode = 'none'; }
+function netErr(e) { if (Net.onError) Net.onError(e.type === 'peer-unavailable' ? 'No game found with that code.' : e.type === 'unavailable-id' ? 'Room code clash, try again.' : 'Network error: ' + (e.type || e.message || e)); }
+async function netHost() {
+  await loadPeer(); netClose(); Net.mode = 'host';
   Net.code = Array.from({ length: 5 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ'[Math.random() * 24 | 0]).join('');
   Net.peer = new Peer(PEER_PREFIX + Net.code);
-  Net.peer.on('open', () => sendLobby());
-  Net.peer.on('error', e => Net.onError && Net.onError(e.type === 'unavailable-id' ? 'Room code clash, please try again.' : 'Network error: ' + (e.type || e.message)));
+  Net.peer.on('open', () => Net.onOpen && Net.onOpen(Net.code));
+  Net.peer.on('error', netErr);
   Net.peer.on('connection', c => {
-    c.on('data', m => {
-      if (!m) return;
-      if (m.t === 'join') {
-        if (running || Net.conns.length >= 3 || Net.conns.includes(c)) { c.send({ t: 'full' }); return; }
-        c.pname = String(m.name || 'Player').slice(0, 16); Net.conns.push(c); sendLobby();
-      } else if (m.t === 'cmd' && running && c.slot != null) { try { applyCmd(c.slot, m.c); } catch (e) { console.warn('bad command', e); } }
-    });
-    c.on('close', () => {
-      const i = Net.conns.indexOf(c); if (i < 0) return; Net.conns.splice(i, 1);
-      if (running && S && c.slot != null) { const p = S.players[c.slot]; if (p && p.alive) { makeAI(p, 'normal'); S.msgs.push(p.name + ' left. The computer takes over their village.'); } }
-      else sendLobby();
-    });
+    if (Net.conn) { c.on('open', () => { c.send({ t: 'full' }); }); return; }
+    Net.conn = c;
+    c.on('open', () => { newMatch({ bots: [null, null] }); c.send({ t: 'start' }); startGame(0, 'host'); });
+    c.on('data', m => { if (m && m.t === 'i' && G && G.host) { const i = G.inp[1]; i.mx = clamp(+m.mx || 0, -1, 1); i.jc = m.jc | 0; i.a = !!m.a; } });
+    c.on('close', () => { if (Net.conn === c) { Net.conn = null; netLost('Your opponent left the game.'); } });
   });
 }
-async function netJoin(code, name) {
-  await loadPeer();
-  Net.mode = 'client'; Net.name = name; Net.code = code;
-  Net.peer = new Peer();
-  Net.peer.on('error', e => Net.onError && Net.onError(e.type === 'peer-unavailable' ? 'No game found with that code.' : 'Network error: ' + (e.type || e.message)));
+async function netJoin(code) {
+  await loadPeer(); netClose(); Net.mode = 'client'; Net.code = code;
+  Net.peer = new Peer(); Net.peer.on('error', netErr);
   Net.peer.on('open', () => {
     const c = Net.conn = Net.peer.connect(PEER_PREFIX + code, { reliable: true });
-    c.on('open', () => c.send({ t: 'join', name }));
     c.on('data', m => {
       if (!m) return;
-      if (m.t === 'lobby') { if (Net.onLobby) Net.onLobby(m.players); }
-      else if (m.t === 'full') { if (Net.onError) Net.onError('That game is full or already started.'); }
-      else if (m.t === 'start') { clientState(m.seed, m.players); startGame(m.you); }
-      else if (m.t === 's' && S && !S.host) { applySnap(m); consumeEvents(m.e, m.fx, m.msg); }
+      if (m.t === 'full') { if (Net.onError) Net.onError('That game already has two players.'); }
+      else if (m.t === 'start') { clientInit(); startGame(1, 'client'); }
+      else if (m.t === 's' && G && !G.host) { applySnap(m); if (m.fx) for (const f of m.fx) handleFx(f); }
     });
-    c.on('close', () => { if (Net.onError) Net.onError('Disconnected from the host.'); toast('Disconnected from the host.'); });
+    c.on('close', () => netLost('The host left the game.'));
   });
 }
-function netStart(seed, aiCount, diff) {
-  const players = lobbyList().map(n => ({ name: n, ai: false }));
-  for (let i = 0; i < aiCount && players.length < 4; i++) players.push({ name: 'Computer ' + (i + 1), ai: true, diff });
-  newGame({ seed, players });
-  Net.conns.forEach((c, i) => { c.slot = i + 1; c.send({ t: 'start', seed, players: players.map(p => ({ name: p.name, ai: p.ai })), you: c.slot }); });
-  startGame(0);
+function netSend() { // host: after sim ticks
+  if (!Net.conn || !Net.conn.open) { Net.fxBuf.length = 0; return; }
+  const m = makeSnap(); if (Net.fxBuf.length) { m.fx = Net.fxBuf; Net.fxBuf = []; }
+  try { Net.conn.send(m); } catch (e) { }
 }
-function netSnapshot() { // host: called after sim ticks
-  if (!Net.conns.length) { Net.buf.e.length = Net.buf.fx.length = Net.buf.msg.length = 0; return; }
-  const m = makeSnap(false);
-  if (Net.buf.e.length) m.e = Net.buf.e; if (Net.buf.fx.length) m.fx = Net.buf.fx; if (Net.buf.msg.length) m.msg = Net.buf.msg;
-  Net.buf = { e: [], fx: [], msg: [] };
-  for (const c of Net.conns) { try { c.send(m); } catch (e) { } }
-}
-function sendCmd(c) { if (S.host) applyCmd(ME, c); else if (Net.conn && Net.conn.open) Net.conn.send({ t: 'cmd', c }); }
+function netInput(i) { if (Net.conn && Net.conn.open) try { Net.conn.send({ t: 'i', mx: i.mx, jc: i.jc, a: i.a }); } catch (e) { } }
