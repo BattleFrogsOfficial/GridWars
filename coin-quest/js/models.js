@@ -36,6 +36,7 @@ const TEMPER_RAMPS = {
 const FIXED = {
   eye: ramp('#a8b0c0', '#e8ecf4', '#ffffff', '#ffffff'),
   eyeY: ramp('#a88a20', '#f0c840', '#ffe680', '#fffad0'),
+  eyeGlow: ramp('#e0a810', '#ffe040', '#fff4a0', '#ffffff'), // bright on any body colour
   pupil: ramp('#0a060c', '#140a14', '#2a1a2a', '#c8c8d8'),
   dark: ramp('#14060c', '#2a0e16', '#3e1620', '#5a2430'),
   horn: ramp('#7a6a50', '#c8b890', '#ece0c0', '#ffffff'),
@@ -51,7 +52,7 @@ const FIXED = {
 };
 
 const OUTLINE = [20, 10, 20];
-const EMISSIVE = new Set(['glow', 'fire']);
+const EMISSIVE = new Set(['glow', 'fire', 'eyeGlow']);
 const GLOSSY = new Set(['eye', 'eyeY', 'pupil', 'horn', 'tooth', 'metal']);
 
 // ---------- SDF primitives (p is x,y,z) ----------
@@ -220,8 +221,10 @@ function dragon(elder) {
     ell(v(0, 1.62, 0.22), v(0.28, 0.24, 0.3), 'body', { k: 0.1 }),
     ell(v(0, 1.53, 0.48), v(0.17, 0.13, 0.21), 'body', { k: 0.08 }),
     sph(v(0.06, 1.59, 0.66), 0.026 * s, 'dark', { sym: true }),
-    ell(v(0.15, 1.69, 0.36), v(0.07, 0.06, 0.05), elder ? 'glow' : 'eyeY', { sym: true }),
-    ell(v(0.15, 1.69, 0.405), v(0.02, 0.05, 0.02), 'pupil', { sym: true }),
+    // eyes sit on the face (the head's surface is at z ≈ 0.46 here), with slit pupils and a brow ridge
+    ell(v(0.15, 1.69, 0.45), v(0.085, 0.068, 0.06), 'eyeGlow', { sym: true }),
+    ell(v(0.155, 1.69, 0.505), v(0.024, 0.058, 0.02), 'pupil', { sym: true }),
+    cone(v(0.07, 1.775, 0.47), v(0.25, 1.75, 0.39), 0.035 * s, 0.03 * s, 'body', { sym: true, k: 0.02 }),
     cone(v(0.14, 1.79, 0.1), v(0.32, 2.06, -0.22), 0.06 * s, 0.014, 'horn', { sym: true }),
     // wings: a membrane with a scalloped trailing edge and three finger bones, flapping at the shoulder
     ...wing(v, s),
@@ -270,8 +273,10 @@ function flyingDragon() {
     sph([0, 2.44, 0.7], 0.075, 'fire'),
     box([0.07, 2.49, 0.68], [0.02, 0.03, 0.02], 'tooth', { sym: true, rad: 0.006 }),
     sph([0.06, 2.57, 0.74], 0.024, 'dark', { sym: true }),
-    ell([0.14, 2.67, 0.44], [0.07, 0.05, 0.05], 'glow', { sym: true }),
-    ell([0.14, 2.67, 0.485], [0.02, 0.045, 0.02], 'pupil', { sym: true }),
+    // glowing eyes on the face (the head's surface is at z ≈ 0.52 here), slit pupils, heavy brows
+    ell([0.14, 2.67, 0.51], [0.092, 0.066, 0.06], 'eyeGlow', { sym: true }),
+    ell([0.145, 2.67, 0.565], [0.024, 0.052, 0.02], 'pupil', { sym: true }),
+    cone([0.06, 2.75, 0.53], [0.25, 2.73, 0.44], 0.038, 0.032, 'body', { sym: true, k: 0.02 }),
     // crown of horns
     cone([0.14, 2.78, 0.16], [0.34, 3.08, -0.16], 0.065, 0.014, 'horn', { sym: true }),
     cone([0.22, 2.72, 0.1], [0.58, 2.84, -0.1], 0.06, 0.012, 'horn', { sym: true }),
