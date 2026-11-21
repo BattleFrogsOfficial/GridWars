@@ -11,7 +11,7 @@ import { XP, attackXp, levelInfo, streak } from './player.js';
 import { uid, emptyState } from './state.js';
 import { loadState, saveState, requestPersistence, downloadBackup, readBackup } from './storage.js';
 import { drawSprite } from './sprites.js';
-import { esc, toast, openSheet, openForm } from './ui.js';
+import { esc, toast, openSheet, openForm, askConfirm } from './ui.js';
 
 let state = emptyState();
 const ui = { month: ymOf(todayISO()), persisted: null, installPrompt: null };
@@ -161,7 +161,7 @@ function townView() {
 
     ${!standalone && iOS ? `<section class="card tip">Install: tap <b>Share</b> then <b>Add to Home Screen</b>. It works offline and keeps your save safer.</section>` : ''}
     ${!standalone && ui.installPrompt ? `<section class="card tip">Install Coin Quest on this device. <button class="btn primary" data-action="install">Install</button></section>` : ''}
-    ${hasData && (backupAge == null || backupAge > 30) ? `<section class="card tip">Your save lives only on this device. ${backupAge == null ? 'You have never made a backup.' : `Last backup was ${backupAge} days ago.`} <a href="#/settings">Back up now</a></section>` : ''}
+    ${hasData && (backupAge == null || backupAge > 30) ? `<section class="card tip">Your save lives only on this device. ${backupAge == null ? 'You have never made a backup.' : `Last backup was ${backupAge} days ago.`} <a href="#gear">Back up now</a></section>` : ''}
 
     <section class="card">
       <h2>The Battlefield</h2>
@@ -169,8 +169,9 @@ function townView() {
         <div class="big">${fmt(totalHp)}</div><small>total monster HP across ${alive.length} monster${alive.length === 1 ? '' : 's'}</small>
         ${plan.feasible ? `<p>On your current plan, the last one falls in <b>${monthLabel(addMonths(ymOf(todayISO()), plan.months))}</b>.</p>` : `<p class="bad">At this pace some monsters never die. Check the Quest tab.</p>`}
         ${regen.length ? `<p class="bad">${regen.map((m) => esc(m.name)).join(', ')} heal${regen.length === 1 ? 's' : ''} faster than the minimum payment hits.</p>` : ''}
-        <a class="btn" href="#/battle">To battle</a>`
-        : `<p>No monsters yet. Add your debts to see them.</p><a class="btn primary" href="#/battle">Add a debt</a>`}
+        <a class="btn" href="#battle">To battle</a>`
+        : `<p>No monsters yet. Add your debts to see them.</p>
+           <div class="row-buttons"><a class="btn primary" href="#battle">Add a debt</a>${hasData ? '' : '<button class="btn" data-action="example">Try example data</button>'}</div>`}
     </section>
 
     <section class="card">
@@ -356,10 +357,12 @@ function settingsView() {
     </section>`;
 }
 
-const VIEWS = { town: townView, battle: battleView, quest: questView, budget: budgetView, settings: settingsView };
+// Routes are plain #names (no slashes) so links work inside embedded viewers too.
+const VIEWS = { town: townView, battle: battleView, quest: questView, budget: budgetView, gear: settingsView };
 
 function route() {
   const r = location.hash.replace(/^#\/?/, '');
+  if (r === 'settings') return 'gear'; // old links
   return r in VIEWS ? r : 'town';
 }
 
@@ -427,11 +430,13 @@ function editDebt(m) {
     extra: [{ label: 'Delete', action: 'delete', className: 'bad' }],
     onExtra: (action, close) => {
       if (action !== 'delete') return;
-      if (!confirm(`Delete ${m.name} and its whole history? This can't be undone.`)) return;
-      close();
-      commit((s) => {
-        s.debts = s.debts.filter((d) => d.id !== m.id);
-        s.ledger = s.ledger.filter((e) => e.debtId !== m.id);
+      askConfirm(`Delete ${m.name} and its whole history? This can't be undone.`, { okLabel: 'Delete', danger: true }).then((ok) => {
+        if (!ok) return;
+        close();
+        commit((s) => {
+          s.debts = s.debts.filter((d) => d.id !== m.id);
+          s.ledger = s.ledger.filter((e) => e.debtId !== m.id);
+        });
       });
     },
   });
@@ -537,10 +542,13 @@ function openDebt(id, hit = 0) {
     className: 'debt',
     onAction: (action, el, { close }) => {
       if (action === 'del-ledger') {
-        if (!confirm('Delete this entry?')) return;
-        close();
-        commit((s) => (s.ledger = s.ledger.filter((e) => e.id !== el.dataset.id)));
-        return openDebt(id);
+        askConfirm('Delete this history entry? The balance will be recalculated.', { okLabel: 'Delete', danger: true }).then((ok) => {
+          if (!ok) return;
+          close();
+          commit((s) => (s.ledger = s.ledger.filter((e) => e.id !== el.dataset.id)));
+          openDebt(id);
+        });
+        return;
       }
       close();
       if (action === 'attack') addEntry(m, 'payment');
@@ -614,11 +622,13 @@ function categoryForm(c) {
     extra: isNew || isDebt ? [] : [{ label: 'Delete', action: 'delete', className: 'bad' }],
     onExtra: (action, close) => {
       const used = state.expenses.filter((e) => e.categoryId === c.id).length;
-      if (!confirm(used ? `Delete ${c.name} and its ${used} logged expense(s)?` : `Delete ${c.name}?`)) return;
-      close();
-      commit((s) => {
-        s.categories = s.categories.filter((x) => x.id !== c.id);
-        s.expenses = s.expenses.filter((e) => e.categoryId !== c.id);
+      askConfirm(used ? `Delete ${c.name} and its ${used} logged expense(s)?` : `Delete ${c.name}?`, { okLabel: 'Delete', danger: true }).then((ok) => {
+        if (!ok) return;
+        close();
+        commit((s) => {
+          s.categories = s.categories.filter((x) => x.id !== c.id);
+          s.expenses = s.expenses.filter((e) => e.categoryId !== c.id);
+        });
       });
     },
     onSubmit: (v) => {
@@ -630,9 +640,9 @@ function categoryForm(c) {
   });
 }
 
-function split503020() {
+async function split503020() {
   const income = monthSummary(state, ui.month).income;
-  if (!confirm(`Split ${fmt(income)} as 50% needs, 30% wants, 20% savings & debt? You can adjust each one after.`)) return;
+  if (!(await askConfirm(`Split ${fmt(income)} as 50% needs, 30% wants, 20% savings & debt? You can adjust each one after.`, { okLabel: 'Split it', title: 'Quick-fill budget' }))) return;
   commit((s) => {
     const groups = [
       [s.categories.filter((c) => c.kind === 'need'), 0.5],
@@ -666,8 +676,8 @@ function onClick(e) {
       ui.month = addMonths(ui.month, Number(a.dataset.d));
       render();
     },
-    'del-entry': () => {
-      if (!confirm('Delete this entry?')) return;
+    'del-entry': async () => {
+      if (!(await askConfirm('Delete this entry?', { okLabel: 'Delete', danger: true }))) return;
       const key = a.dataset.t === 'income' ? 'incomes' : 'expenses';
       commit((s) => (s[key] = s[key].filter((x) => x.id !== a.dataset.id)));
     },
@@ -691,14 +701,20 @@ function onClick(e) {
       commit((s) => (s.settings.lastBackup = todayISO()));
       toast('Backup downloaded. Keep it somewhere safe.');
     },
-    erase: () => {
-      if (!confirm('Erase ALL data on this device? Download a backup first if you might want it.')) return;
-      if (prompt('Type ERASE to confirm') !== 'ERASE') return;
+    erase: async () => {
+      if (!(await askConfirm('Erase ALL your debts, budget and progress on this device? Download a backup first if you might want it. This cannot be undone.', { okLabel: 'Erase everything', danger: true, title: 'Erase everything?' }))) return;
       state = emptyState();
       save();
-      location.hash = '#/town';
+      location.hash = '#town';
       render();
       toast('All data erased.');
+    },
+    example: async () => {
+      if (!(await askConfirm('Load made-up example debts and a sample budget so you can try things out? Erase it later from the Gear tab.', { okLabel: 'Load examples', title: 'Example data' }))) return;
+      state = exampleState();
+      save();
+      render();
+      toast('Example data loaded. These are not your numbers.');
     },
     install: async () => {
       ui.installPrompt?.prompt();
@@ -719,7 +735,7 @@ async function onChange(e) {
     if (!file) return;
     try {
       const restored = await readBackup(file);
-      if (!confirm(`Replace everything on this device with this backup (${restored.debts.length} debts, ${restored.incomes.length + restored.expenses.length} budget entries)?`)) return;
+      if (!(await askConfirm(`Replace everything on this device with this backup (${restored.debts.length} debts, ${restored.incomes.length + restored.expenses.length} budget entries)?`, { okLabel: 'Restore', title: 'Restore backup?' }))) return;
       state = restored;
       runAccrual();
       save();
@@ -729,6 +745,39 @@ async function onChange(e) {
       toast(err.message || 'Could not read that backup.', 'bad');
     }
   }
+}
+
+// ---------- example data ----------
+
+function exampleState() {
+  const s = emptyState();
+  const today = todayISO();
+  const ym = ymOf(today);
+  const lastMonth = addMonths(ym, -1);
+  const debt = (name, type, bal, apr, min, dueDay, include = true) => ({
+    id: uid(), name, type, startBalance: bal, apr, minPayment: min, dueDay, include, autoInterest: true,
+    createdAt: today, accruedThrough: today, killRewarded: false,
+  });
+  s.debts = [
+    debt('Example: Visa', 'credit', 420000, 24.99, 9500, 15),
+    debt('Example: Store card', 'credit', 100000, 29.99, 2000, 5),
+    debt('Example: Car loan', 'car', 1450000, 6.9, 31000, 20),
+    debt('Example: Dentist', 'medical', 32000, 0, 4000, 1),
+    debt('Example: Mortgage', 'mortgage', 25000000, 6.5, 160000, 1, false),
+  ];
+  const limits = { housing: 120000, food: 45000, transport: 20000, utilities: 25000, fun: 20000, savings: 20000, 'debt-attack': 80000 };
+  for (const c of s.categories) c.limit = limits[c.id] ?? 0;
+  s.incomes = [
+    { id: uid(), amount: 175000, source: 'Example paycheck', date: `${ym}-01`, note: '' },
+    { id: uid(), amount: 175000, source: 'Example paycheck', date: `${lastMonth}-15`, note: '' },
+  ];
+  s.expenses = [
+    { id: uid(), amount: 120000, categoryId: 'housing', date: `${ym}-01`, note: 'Rent' },
+    { id: uid(), amount: 8240, categoryId: 'food', date: `${ym}-02`, note: 'Groceries' },
+    { id: uid(), amount: 4500, categoryId: 'transport', date: `${ym}-03`, note: 'Gas' },
+  ];
+  s.ledger = [{ id: uid(), debtId: s.debts[3].id, kind: 'payment', amount: -4000, date: `${ym}-01`, note: '', auto: false }];
+  return s;
 }
 
 // ---------- boot ----------
@@ -753,7 +802,7 @@ async function boot() {
   render();
   requestPersistence().then((p) => {
     ui.persisted = p;
-    if (route() === 'settings') render();
+    if (route() === 'gear') render();
   });
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     navigator.serviceWorker.register('sw.js').catch((err) => console.warn('Service worker failed', err));

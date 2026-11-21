@@ -174,3 +174,24 @@ export function openForm({ title, intro = '', fields, submitLabel = 'Save', onSu
   });
   return sheet;
 }
+
+/** In-app confirmation (native confirm() is blocked in some embedded viewers and looks out of place). Resolves true/false. */
+export function askConfirm(message, { okLabel = 'Confirm', danger = false, title = 'Are you sure?' } = {}) {
+  return new Promise((resolve) => {
+    let answered = false;
+    openSheet(
+      `<h2>${esc(title)}</h2><p>${esc(message)}</p>
+       <div class="row-buttons"><button class="btn" data-action="close">Cancel</button>
+       <button class="btn ${danger ? 'bad' : 'primary'}" data-action="ok">${esc(okLabel)}</button></div>`,
+      {
+        onAction: (a, _el, { close }) => {
+          if (a === 'ok') {
+            answered = true;
+            close();
+          }
+        },
+        onClose: () => resolve(answered),
+      },
+    );
+  });
+}
