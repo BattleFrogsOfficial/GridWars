@@ -222,9 +222,9 @@ function dragon(elder) {
     ell(v(0, 1.53, 0.48), v(0.17, 0.13, 0.21), 'body', { k: 0.08 }),
     sph(v(0.06, 1.59, 0.66), 0.026 * s, 'dark', { sym: true }),
     // eyes sit on the face (the head's surface is at z ≈ 0.46 here), with slit pupils and a brow ridge
-    ell(v(0.15, 1.69, 0.45), v(0.085, 0.068, 0.06), 'eyeGlow', { sym: true }),
-    ell(v(0.155, 1.69, 0.505), v(0.024, 0.058, 0.02), 'pupil', { sym: true }),
-    cone(v(0.07, 1.775, 0.47), v(0.25, 1.75, 0.39), 0.035 * s, 0.03 * s, 'body', { sym: true, k: 0.02 }),
+    ell(v(0.15, 1.69, 0.445), v(0.055, 0.045, 0.04), 'eyeGlow', { sym: true }),
+    ell(v(0.153, 1.69, 0.478), v(0.016, 0.038, 0.014), 'pupil', { sym: true }),
+    cone(v(0.08, 1.755, 0.465), v(0.23, 1.735, 0.4), 0.03 * s, 0.026 * s, 'body', { sym: true, k: 0.02 }),
     cone(v(0.14, 1.79, 0.1), v(0.32, 2.06, -0.22), 0.06 * s, 0.014, 'horn', { sym: true }),
     // wings: a membrane with a scalloped trailing edge and three finger bones, flapping at the shoulder
     ...wing(v, s),
@@ -274,9 +274,9 @@ function flyingDragon() {
     box([0.07, 2.49, 0.68], [0.02, 0.03, 0.02], 'tooth', { sym: true, rad: 0.006 }),
     sph([0.06, 2.57, 0.74], 0.024, 'dark', { sym: true }),
     // glowing eyes on the face (the head's surface is at z ≈ 0.52 here), slit pupils, heavy brows
-    ell([0.14, 2.67, 0.51], [0.092, 0.066, 0.06], 'eyeGlow', { sym: true }),
-    ell([0.145, 2.67, 0.565], [0.024, 0.052, 0.02], 'pupil', { sym: true }),
-    cone([0.06, 2.75, 0.53], [0.25, 2.73, 0.44], 0.038, 0.032, 'body', { sym: true, k: 0.02 }),
+    ell([0.14, 2.67, 0.51], [0.058, 0.044, 0.04], 'eyeGlow', { sym: true }),
+    ell([0.142, 2.67, 0.543], [0.016, 0.036, 0.014], 'pupil', { sym: true }),
+    cone([0.07, 2.735, 0.525], [0.24, 2.715, 0.45], 0.032, 0.028, 'body', { sym: true, k: 0.02 }),
     // crown of horns
     cone([0.14, 2.78, 0.16], [0.34, 3.08, -0.16], 0.065, 0.014, 'horn', { sym: true }),
     cone([0.22, 2.72, 0.1], [0.58, 2.84, -0.1], 0.06, 0.012, 'horn', { sym: true }),
