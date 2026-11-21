@@ -3,10 +3,9 @@
 # One-time setup: repository Settings -> Pages -> Build and deployment -> Source: GitHub Actions.
 name: Coin Quest site
 
+# Manual only for now: the app is still being built. To publish automatically on every change to main,
+# add back:  push: { branches: [main], paths: ['coin-quest/**'] }
 on:
-  push:
-    branches: [main, master]
-    paths: ['coin-quest/**', '.github/workflows/coin-quest-pages.yml']
   workflow_dispatch:
 
 permissions:

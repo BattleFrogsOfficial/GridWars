@@ -5,8 +5,8 @@ It installs from the website ("Add to Home Screen") and works offline. All data 
 
 ## Hosting (install on your phone)
 
-The app is published to GitHub Pages by `.github/workflows/coin-quest-pages.yml` whenever `coin-quest/` changes on `main`.
-One-time setup: repository **Settings → Pages → Source: GitHub Actions**, then merge to `main` (or run the workflow by hand).
+Not switched on yet. `.github/workflows/coin-quest-pages.yml` publishes the app to GitHub Pages, but only when run by hand (Actions → Coin Quest site → Run workflow) while the app is still being built.
+One-time setup: repository **Settings → Pages → Source: GitHub Actions**, then run the workflow.
 The site address will be `https://<owner>.github.io/<repo>/`. Open it in Safari (iPhone) or Chrome (Android) and add it to the home screen.
 GitHub Pages on a private repository needs a paid GitHub plan.
 
