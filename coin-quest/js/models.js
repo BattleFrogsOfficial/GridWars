@@ -102,10 +102,11 @@ const box = (c, h, m, o = {}) => ({ s: 'box', c, h, rad: o.rad || 0.02, m, ...o 
 const cyl = (c, r, hh, m, o = {}) => ({ s: 'cyl', c, r, hh, m, ...o });
 
 /** Scale every position and size in a list of parts (used to make the slime small). */
-function scaleParts(parts, k) {
-  const v = (a) => a && a.map((n) => n * k);
+function scaleParts(parts, k, about = [0, 0, 0]) {
+  const v = (a) => a && a.map((n, i) => about[i] + (n - about[i]) * k);
+  const d = (a) => a && a.map((n) => n * k);
   return parts.map((p) => ({
-    ...p, c: v(p.c), a: v(p.a), b: v(p.b), h: v(p.h), r: Array.isArray(p.r) ? v(p.r) : p.r && p.r * k,
+    ...p, c: v(p.c), a: v(p.a), b: v(p.b), h: d(p.h), r: Array.isArray(p.r) ? d(p.r) : p.r && p.r * k,
     r1: p.r1 && p.r1 * k, r2: p.r2 && p.r2 * k, hh: p.hh && p.hh * k, rad: p.rad && p.rad * k, k: p.k && p.k * k,
     flap: p.flap && [v(p.flap[0]), p.flap[1]],
   }));
@@ -222,8 +223,8 @@ function dragon(elder) {
     ell(v(0, 1.53, 0.48), v(0.17, 0.13, 0.21), 'body', { k: 0.08 }),
     sph(v(0.06, 1.59, 0.66), 0.026 * s, 'dark', { sym: true }),
     // eyes sit on the face (the head's surface is at z ≈ 0.46 here), with slit pupils and a brow ridge
-    ell(v(0.15, 1.69, 0.445), v(0.055, 0.045, 0.04), 'eyeGlow', { sym: true }),
-    ell(v(0.153, 1.69, 0.478), v(0.016, 0.038, 0.014), 'pupil', { sym: true }),
+    ell(v(0.15, 1.69, 0.445), v(0.062, 0.05, 0.04), 'eyeGlow', { sym: true }),
+    ell(v(0.154, 1.69, 0.478), v(0.018, 0.042, 0.014), 'pupil', { sym: true }),
     cone(v(0.08, 1.755, 0.465), v(0.23, 1.735, 0.4), 0.03 * s, 0.026 * s, 'body', { sym: true, k: 0.02 }),
     cone(v(0.14, 1.79, 0.1), v(0.32, 2.06, -0.22), 0.06 * s, 0.014, 'horn', { sym: true }),
     // wings: a membrane with a scalloped trailing edge and three finger bones, flapping at the shoulder
@@ -266,6 +267,8 @@ function flyingDragon() {
     ell([0, 1.78, 0], [0.42, 0.56, 0.36], 'body'),
     ell([0, 1.72, 0.2], [0.28, 0.46, 0.2], 'belly', { k: 0.05 }),
     cone([0, 2.16, 0.04], [0, 2.46, 0.2], 0.2, 0.16, 'body', { k: 0.1 }),
+    // the head is drawn a size up so the face reads against the huge wings
+    ...scaleParts([
     ell([0, 2.6, 0.28], [0.27, 0.23, 0.3], 'body', { k: 0.1 }),
     ell([0, 2.52, 0.55], [0.17, 0.12, 0.21], 'body', { k: 0.07 }),
     ell([0, 2.38, 0.5], [0.15, 0.055, 0.19], 'body', { k: 0.03 }), // open lower jaw
@@ -274,14 +277,15 @@ function flyingDragon() {
     box([0.07, 2.49, 0.68], [0.02, 0.03, 0.02], 'tooth', { sym: true, rad: 0.006 }),
     sph([0.06, 2.57, 0.74], 0.024, 'dark', { sym: true }),
     // glowing eyes on the face (the head's surface is at z ≈ 0.52 here), slit pupils, heavy brows
-    ell([0.14, 2.67, 0.51], [0.058, 0.044, 0.04], 'eyeGlow', { sym: true }),
-    ell([0.142, 2.67, 0.543], [0.016, 0.036, 0.014], 'pupil', { sym: true }),
+    ell([0.14, 2.67, 0.51], [0.064, 0.048, 0.04], 'eyeGlow', { sym: true }),
+    ell([0.143, 2.67, 0.543], [0.017, 0.04, 0.014], 'pupil', { sym: true }),
     cone([0.07, 2.735, 0.525], [0.24, 2.715, 0.45], 0.032, 0.028, 'body', { sym: true, k: 0.02 }),
     // crown of horns
     cone([0.14, 2.78, 0.16], [0.34, 3.08, -0.16], 0.065, 0.014, 'horn', { sym: true }),
     cone([0.22, 2.72, 0.1], [0.58, 2.84, -0.1], 0.06, 0.012, 'horn', { sym: true }),
     cone([0.07, 2.82, 0.18], [0.12, 3.12, 0.08], 0.045, 0.01, 'horn', { sym: true }),
     cone([0.22, 2.52, 0.32], [0.4, 2.46, 0.38], 0.04, 0.01, 'horn', { sym: true }),
+    ], 1.22, [0, 2.44, 0.2]),
     // arms reaching forward with claws
     cone([0.3, 2.0, 0.1], [0.44, 1.62, 0.44], 0.09, 0.07, 'body', { sym: true, k: 0.05 }),
     sph([0.45, 1.56, 0.5], 0.08, 'body', { sym: true }),
@@ -313,13 +317,13 @@ function flyingDragon() {
     bite([-0.32, 1.95, 0.2], 0.15, 0.8),
     bite([0.34, 3.0, -0.12], 0.1, 0.9),
   ];
-  return { height: 3.25, head: 2.6, anim: 'fly', plates: true, flying: true, bust: { ty: 2.42, dist: 3.8 }, shadow: [0.9, 0.5], parts };
+  return { height: 3.25, head: 2.6, anim: 'fly', plates: true, flying: true, bust: { ty: 2.5, dist: 3.8 }, shadow: [0.9, 0.5], parts };
 }
 
 function castle() {
   const merlons = [-0.6, -0.3, 0, 0.3, 0.6].map((x) => box([x, 1.27, 0.25], [0.075, 0.07, 0.06], 'stone', { rad: 0.01 }));
   return {
-    height: 2.25, head: 1.3, anim: 'none', bricks: true, bust: { ty: 1.55, dist: 4.6 }, shadow: [1.2, 0.5], ruin: true,
+    height: 2.25, head: 1.3, anim: 'none', bricks: true, bust: { ty: 1.2, dist: 5.4 }, shadow: [1.2, 0.5], ruin: true,
     parts: [
       box([0, 0.6, 0], [0.75, 0.6, 0.3], 'stone'),
       cyl([0.86, 0.82, 0], 0.3, 0.82, 'stone', { sym: true }),
@@ -549,14 +553,14 @@ export function renderModel(type, temper = 'angry', opts = {}) {
       let gash = false;
       if (damage > 0.08 && (mat === 'body' || mat === 'belly' || mat === 'wing' || mat === 'stone' || mat === 'roof')) {
         // the model surface is split into cells; a growing share of them gets a diagonal slash
-        const cs = 0.26;
+        const cs = model.ruin ? 0.42 : 0.26, share = model.ruin ? 0.45 : 0.75;
         const cx = Math.floor(mx / cs), cyy = Math.floor(my / cs), cz = Math.floor(mz / cs);
         const hsh = Math.abs(Math.sin(cx * 127.1 + cyy * 311.7 + cz * 74.7) * 43758.5453) % 1;
-        if (hsh < damage * 0.75) {
+        if (hsh < damage * share) {
           const fx2 = mx / cs - cx, fy2 = my / cs - cyy;
-          const dline = hsh < damage * 0.37 ? Math.abs(fx2 - fy2) : Math.abs(fx2 + fy2 - 1);
+          const dline = hsh < damage * share / 2 ? Math.abs(fx2 - fy2) : Math.abs(fx2 + fy2 - 1);
           if (dline < 0.09 && fx2 > 0.15 && fx2 < 0.85) gash = true;
-          else if (dline < 0.2 && fx2 > 0.1 && fx2 < 0.9) val -= 0.25;
+          else if (!model.ruin && dline < 0.2 && fx2 > 0.1 && fx2 < 0.9) val -= 0.25;
         }
       }
       if (GLOSSY.has(mat)) {
@@ -662,7 +666,8 @@ export function renderPortrait(type, temper = 'angry', opts = {}) {
   const mix = (a, b, f) => [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
   const night = [16, 12, 30];
   // backdrop: dark at the top, a glow of the temper colour behind the monster, dithered in steps
-  const glow = mix(night, tp.body[0], 0.9), mid = mix(night, tp.body[0], 0.45);
+  const back = model.ruin ? [70, 84, 140] : tp.body[0];
+  const glow = mix(night, back, 0.9), mid = mix(night, back, 0.45);
   for (let y = 0; y < inner; y++) {
     for (let x = 0; x < inner; x++) {
       const dx = (x - inner / 2) / inner, dy = (y - inner * 0.62) / inner;

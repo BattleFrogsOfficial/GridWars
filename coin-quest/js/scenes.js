@@ -30,7 +30,7 @@ export const HABITATS = {
     far: '#45202e', near: '#26121c', ground: ['#382818', '#44321e'], path: '#5e482c', fog: '#b05a3a', props: 'pines', particles: 'embers',
   },
   troll: {
-    name: 'Stone Bridge', sky: ['#18223e', '#34466c', '#7484aa', '#bcc4dc'], orb: { c: '#ffffff', x: 0.8, y: 0.16, r: 5 },
+    name: 'Stone Bridge', sky: ['#18223e', '#34466c', '#7484aa', '#bcc4dc'], orb: { c: '#eef0fa', x: 0.8, y: 0.16, r: 6, moon: true },
     far: '#465070', near: '#282e46', ground: ['#454554', '#525264'], path: '#6a6a7e', fog: '#8a94b4', props: 'rocks', particles: 'mist',
   },
   drake: {
@@ -122,22 +122,6 @@ export function renderScene(type, w = 120, h = 168) {
       put(x, y, c);
     }
   }
-  // dragon hoard: piles of gold at both sides of the floor
-  if (H.gold) {
-    for (const [cx, cy, r] of [[w * 0.08, h * 0.8, w * 0.2], [w * 0.92, h * 0.82, w * 0.22], [w * 0.2, h * 0.66, w * 0.1]]) {
-      for (let y = Math.floor(cy - r); y < h; y++) {
-        for (let x = Math.floor(cx - r * 1.4); x < cx + r * 1.4; x++) {
-          const d = ((x - cx) / (r * 1.4)) ** 2 + ((y - cy) / r) ** 2;
-          if (d < 1 && y > cy - r * (1 - ((x - cx) / (r * 1.4)) ** 2) * 0.9) {
-            // shaded mound: lit from the top, a few coins catching the light
-            const glint = hash2(x, y, 5);
-            const lit = 1 - (y - (cy - r)) / (r * 1.6) + (bayer(x, y) - 0.5) * 0.3;
-            put(x, y, glint > 0.975 ? shex('#fff6c0') : lit > 0.62 ? shex('#f0c040') : lit > 0.38 ? shex('#c8941c') : d > 0.75 ? shex('#5e3e0c') : shex('#8a6414'));
-          }
-        }
-      }
-    }
-  }
   // first-person framing props at the screen edges
   const sil = mix(near, [0, 0, 0], 0.45);
   if (H.props === 'pines' || H.props === 'trees') {
@@ -158,10 +142,37 @@ export function renderScene(type, w = 120, h = 168) {
       for (let x = w - rw; x < w; x++) put(x, y, x === w - rw ? mix(sil, fog, 0.4) : sil);
     }
   }
+  // dragon hoard: smooth domed piles of gold at both sides of the floor, lit from above, with a few glints
+  if (H.gold) {
+    const G = ['#4a300a', '#8a6414', '#c8941c', '#f0c040', '#fff0a0'].map(shex);
+    for (const [cx, base, rw, rh] of [[w * 0.12, h * 1.02, w * 0.26, h * 0.17], [w * 0.9, h * 1.02, w * 0.28, h * 0.2], [w * 0.24, h * 0.78, w * 0.1, h * 0.05]]) {
+      for (let y = Math.floor(base - rh); y < Math.min(h, base); y++) {
+        for (let x = Math.floor(cx - rw); x <= cx + rw; x++) {
+          const u = (x - cx) / rw, top = base - rh * (1 - u * u);
+          if (Math.abs(u) > 1 || y < top) continue;
+          // dome normal: facing up near the top edge, sideways toward the rim
+          const depth = (y - top) / Math.max(1, base - top);
+          const lit = 0.95 - depth * 0.9 + u * 0.2 + (bayer(x, y) - 0.5) * 0.22;
+          const edge = y - top < 1;
+          const glint = hash2(x, y, 5) > 0.985 && depth < 0.6;
+          put(x, y, glint ? G[4] : edge ? G[3] : lit > 0.7 ? G[3] : lit > 0.45 ? G[2] : lit > 0.2 ? G[1] : G[0]);
+        }
+      }
+    }
+  }
   if (H.props === 'rocks') {
-    for (const [cx, cy, r] of [[4, h * 0.9, 20], [w - 2, h * 0.86, 24], [w * 0.18, h * 0.72, 8]]) {
+    // boulders in the near corners: lit from the moon (upper right), with a darker underside and a rim
+    const R = [mix(sil, fog, 0.5), mix(sil, fog, 0.3), mix(sil, fog, 0.12), sil];
+    for (const [cx, cy, r] of [[2, h * 0.94, 22], [w - 4, h * 0.9, 24], [w * 0.16, h * 0.74, 7], [w * 0.86, h * 0.72, 5]]) {
       for (let y = Math.floor(cy - r); y < h; y++) for (let x = Math.floor(cx - r * 1.3); x < cx + r * 1.3; x++) {
-        if (((x - cx) / 1.3) ** 2 + (y - cy) ** 2 < r * r) put(x, y, y < cy - r * 0.6 ? mix(sil, fog, 0.35) : sil);
+        const nx = (x - cx) / (r * 1.3), ny = (y - cy) / r;
+        // lumpy outline so it reads as rock, not a disc
+        const lump = 1 + 0.08 * Math.sin(Math.atan2(ny, nx) * 5 + cx);
+        const d2 = nx * nx + ny * ny;
+        if (d2 > lump * lump) continue;
+        const nz = Math.sqrt(Math.max(0, 1 - d2));
+        const lit = nx * 0.45 - ny * 0.6 + nz * 0.4 + (bayer(x, y) - 0.5) * 0.25;
+        put(x, y, d2 > lump * lump * 0.86 ? R[3] : lit > 0.55 ? R[0] : lit > 0.25 ? R[1] : lit > -0.1 ? R[2] : R[3]);
       }
     }
   }
