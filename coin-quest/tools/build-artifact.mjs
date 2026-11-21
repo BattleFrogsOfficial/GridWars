@@ -5,7 +5,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 const root = new URL('../', import.meta.url);
 const read = (p) => readFileSync(new URL(p, root), 'utf8');
-const ORDER = ['money', 'dates', 'debts', 'planner', 'budget', 'player', 'accounts', 'projection', 'state', 'storage', 'sprites', 'ui', 'chart', 'app'];
+const ORDER = ['money', 'dates', 'debts', 'planner', 'budget', 'player', 'accounts', 'projection', 'recurring', 'game', 'state', 'storage', 'sprites', 'ui', 'chart', 'lock', 'app'];
 
 const js = ORDER.map((name) => {
   const src = read(`js/${name}.js`)

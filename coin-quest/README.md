@@ -3,6 +3,13 @@
 A pixel-art budget and debt tracker. Your debts are monsters: payments are attacks, interest is regeneration.
 It installs from the website ("Add to Home Screen") and works offline. All data stays on the device.
 
+## Hosting (install on your phone)
+
+The app is published to GitHub Pages by `.github/workflows/coin-quest-pages.yml` whenever `coin-quest/` changes on `main`.
+One-time setup: repository **Settings → Pages → Source: GitHub Actions**, then merge to `main` (or run the workflow by hand).
+The site address will be `https://<owner>.github.io/<repo>/`. Open it in Safari (iPhone) or Chrome (Android) and add it to the home screen.
+GitHub Pages on a private repository needs a paid GitHub plan.
+
 ## Run it
 
 - Locally: `python3 -m http.server` in this folder, then open http://localhost:8000
@@ -28,6 +35,16 @@ It installs from the website ("Add to Home Screen") and works offline. All data 
 | Current situation | Accounts (cash, savings, invested) with a starting balance; income, expenses, debt payments, paydays, bills and transfers move them, "Update balance" records a correction. Chart of each type over time |
 | Money over time | Chart on the Budget tab: Checking, Savings or Income view; optional 12-month projection (dashed) that assumes the budget is followed, including planned one-off payments |
 | Planned payments | One-off purchases (e.g. Black Friday) and debt payments (one time or every month) on the Spending tab or a debt's sheet. They count in projections (a debt payment only adds what's above its minimum) and become real when logged; monthly ones then roll to next month |
+| Promo rates | A debt's rate applies until `promoEnds`, then `aprAfter` (interest, plan and projections all switch) |
+| Credit card interest | Daily on each day's balance through the cycle; none for a cycle where the previous balance was paid in full |
+| Loan pauses | Deferment/forbearance until `pauseUntil`: no payment due; interest accrues (or not) without compounding and is capitalized when the pause ends (optional) |
+| Card purchases | An expense "paid with" a card adds a linked charge to that debt; paying the card off isn't counted as spending twice |
+| Recurring posting | Income sources and bills with a next date and an account post automatically and roll forward |
+| Budget options | One-month amounts, rollover of unspent money, savings deadlines (needed per month), irregular income averaged from recorded paydays |
+| Editing | Every logged item can be edited; deletes and big changes can be undone for 7 seconds |
+| Game | Achievements, weekly quests, boss (biggest debt) with HP-phase bonuses, missed-payment and overspending reactions, hero outfits and titles |
+| Privacy lock | Passcode (salted SHA-256) and optional Face ID / fingerprint (WebAuthn). A privacy screen, not encryption |
+| Transfer code | The whole save as gzip+base64 text to copy to another device |
 | Save | One JSON document in IndexedDB. Backup = download that JSON; restore validates it first |
 
 ## Files
@@ -40,6 +57,9 @@ It installs from the website ("Add to Home Screen") and works offline. All data 
 | `js/budget.js` | Monthly budget summary |
 | `js/accounts.js` | Account balances, activity and history (current situation) |
 | `js/projection.js` | Month-by-month actuals and projection for the chart |
+| `js/recurring.js` | Paydays and bills posting on their dates |
+| `js/game.js` | Achievements, quests, boss phases, skins |
+| `js/lock.js` | Passcode hashing, WebAuthn, transfer codes |
 | `js/chart.js` | SVG line chart with tap/hover tooltip |
 | `js/player.js` | XP, levels, streaks |
 | `js/state.js` | Save-file shape, validation, migrations |

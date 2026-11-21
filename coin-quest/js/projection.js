@@ -13,7 +13,7 @@
 
 import { addMonths, daysInMonth, dueDateIn, ymOf } from './dates.js';
 import { accountEvents, totalsByType } from './accounts.js';
-import { balanceOf } from './debts.js';
+import { balanceOf, simDebt } from './debts.js';
 import { monthSummary, monthlyPlan } from './budget.js';
 import { simulatePayoff, projectDebt } from './planner.js';
 
@@ -86,7 +86,7 @@ export function moneyTimeline(state, today, { back = 5, ahead = 12, projections 
   const spendLines = lineTotal(['need', 'want']);
   const saveLines = lineTotal(['savings']);
   const extraDebt = lineTotal(['debt']);
-  const asDebt = (x) => ({ id: x.d.id, balance: x.bal, apr: x.d.apr, minPayment: x.d.minPayment });
+  const asDebt = (x) => simDebt(x.d, x.bal, today);
   const sim = simulatePayoff(liveNow.filter((x) => x.d.include).map(asDebt), extraDebt, state.settings.strategy);
   const benched = liveNow.filter((x) => !x.d.include).map((x) => projectDebt(asDebt(x), {}, ahead + 1));
   const at = (tl, k) => tl[Math.min(k, tl.length - 1)] ?? 0;

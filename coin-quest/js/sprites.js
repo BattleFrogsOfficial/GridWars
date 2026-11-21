@@ -146,7 +146,17 @@ const SPECIAL_PALETTES = {
   hero: { b: '#3a6ad6', d: '#24479a', l: '#f2c39a', w: '#24479a', f: '#7a4a24', t: '#c8d0e0' },
 };
 
+/** Hero outfits unlocked by level. For the hero sprite, the "temper" argument is the skin id. */
+export const HERO_SKINS = {
+  adventurer: {},
+  knight: { b: '#9aa4b8', d: '#626b80', w: '#626b80', f: '#3a3a48', t: '#e8e8f0' },
+  ranger: { b: '#3f8a4a', d: '#285c30', w: '#285c30', f: '#5a3a1a', t: '#c8a060' },
+  mage: { b: '#7a4ad6', d: '#4e2a96', w: '#4e2a96', f: '#d8d8e8', t: '#ffd25a' },
+  champion: { b: '#e0b030', d: '#a87a12', w: '#a87a12', f: '#f5e6b0', t: '#ffffff' },
+};
+
 export function paletteFor(spriteKey, temperKey = 'calm') {
+  if (spriteKey === 'hero') return { ...FIXED, ...TEMPER_PALETTES.calm, ...SPECIAL_PALETTES.hero, ...(HERO_SKINS[temperKey] || {}) };
   return { ...FIXED, ...(TEMPER_PALETTES[temperKey] || TEMPER_PALETTES.calm), ...(SPECIAL_PALETTES[spriteKey] || {}) };
 }
 

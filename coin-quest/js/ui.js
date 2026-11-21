@@ -99,6 +99,8 @@ function fieldHtml(f) {
       return `<label for="${id}">${esc(f.label)}</label><input id="${id}" name="${f.name}" inputmode="decimal" autocomplete="off" placeholder="e.g. 24.99" value="${esc(v)}">${hint}`;
     case 'int':
       return `<label for="${id}">${esc(f.label)}</label><input id="${id}" name="${f.name}" inputmode="numeric" autocomplete="off" value="${esc(v)}">${hint}`;
+    case 'pin':
+      return `<label for="${id}">${esc(f.label)}</label><input id="${id}" name="${f.name}" type="password" inputmode="numeric" autocomplete="off" maxlength="8">${hint}`;
     default:
       return `<label for="${id}">${esc(f.label)}</label><input id="${id}" name="${f.name}" autocomplete="off" maxlength="${f.max || 40}" value="${esc(v)}" ${f.placeholder ? `placeholder="${esc(f.placeholder)}"` : ''}>${hint}`;
   }

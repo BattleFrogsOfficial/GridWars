@@ -382,6 +382,84 @@ input:focus, select:focus, .btn:focus-visible, .row-btn:focus-visible, .card:foc
 .toast.good { border-color: var(--good); }
 .toast.bad { border-color: var(--bad); }
 
+
+/* undo */
+#undo-bar {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--tab-h) + env(safe-area-inset-bottom, 0px) + 14px);
+  transform: translate(-50%, 20px);
+  display: flex; align-items: center; gap: 12px;
+  width: max-content; max-width: calc(100vw - 32px);
+  padding: 8px 8px 8px 16px;
+  background: var(--line); border: 2px solid var(--panel-2); border-radius: 12px;
+  font-weight: 800; opacity: 0; pointer-events: none;
+  transition: opacity 0.2s, transform 0.2s; z-index: 40;
+}
+#undo-bar.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+#undo-bar .btn { min-height: 38px; padding: 4px 14px; }
+
+/* monsters: badges, boss, enraged */
+.badges { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 2px; }
+.badge { font-size: 11px; font-weight: 900; letter-spacing: 0.04em; text-transform: uppercase; padding: 2px 7px; border-radius: 6px; background: var(--panel-2); color: var(--ink); }
+.badge.boss { background: linear-gradient(#ffd25a, var(--gold-deep)); color: #2b1600; }
+.badge.bad { background: #8f2a2a; }
+.monster.is-boss { border-color: var(--gold); box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.07), 0 3px 0 var(--line), 0 0 0 2px rgba(255, 201, 74, 0.25); }
+.monster.enraged { border-color: var(--bad); animation: enrage 1.6s ease-in-out infinite; }
+@keyframes enrage { 50% { box-shadow: 0 0 14px rgba(255, 90, 90, 0.45); } }
+.hp .phase { position: absolute; top: 0; bottom: 0; width: 2px; background: rgba(0, 0, 0, 0.55); }
+.card.feed p { margin: 4px 0 0; }
+
+/* hero, quests, achievements */
+button.card.hero { cursor: pointer; }
+.hero-title { color: var(--gold); font-weight: 800; }
+.quests, .achievements { list-style: none; padding: 0; margin: 0; }
+.quests li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
+.quests li:last-child { border-bottom: 0; }
+.quests li.done > .grow { color: var(--good); }
+.quests .meter { height: 6px; margin-top: 4px; }
+.quests .btn { min-height: 38px; padding: 4px 12px; }
+.achievements { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.achievements li { background: var(--bg); border-radius: 8px; padding: 8px 10px; opacity: 0.45; }
+.achievements li.got { opacity: 1; box-shadow: inset 0 0 0 2px var(--gold); }
+.achievements li b { display: block; font-size: 14px; }
+.skins { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; }
+.skin { display: grid; justify-items: center; gap: 4px; padding: 8px 4px; background: var(--bg); border: 2px solid transparent; border-radius: 10px; color: var(--ink); font: inherit; cursor: pointer; }
+.skin.on { border-color: var(--gold); }
+.skin:disabled { opacity: 0.4; cursor: not-allowed; }
+.skin:disabled canvas { filter: grayscale(1) brightness(0.5); }
+
+/* report */
+.report { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 10px; }
+.rep-top { display: flex; justify-content: space-between; gap: 8px; }
+.rep-top small { display: inline; }
+.rep-top b small { display: inline; font-weight: 600; }
+.rep-bar { display: block; height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; margin: 4px 0 2px; }
+.rep-bar span { display: block; height: 100%; background: var(--series-a); border-radius: 4px; }
+
+/* editable log rows: the row text is a button, the × stays separate */
+.log li .row-btn { padding: 0; gap: 10px; }
+
+
+/* privacy lock */
+#lock {
+  position: fixed; inset: 0; z-index: 100;
+  display: grid; place-items: center;
+  background: var(--bg);
+  padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+  overflow-y: auto;
+}
+.lock-box { width: min(320px, 100%); display: grid; justify-items: center; gap: 10px; text-align: center; }
+.lock-box.shake { animation: shake 0.4s steps(4); }
+.lock-box h2 { color: var(--ink); text-transform: none; letter-spacing: 0; font-size: 20px; margin: 0; }
+.pin-dots { font-size: 22px; letter-spacing: 8px; min-height: 30px; color: var(--gold); }
+.lock-msg { margin: 0; color: var(--muted); }
+.keypad { display: grid; grid-template-columns: repeat(3, 72px); gap: 12px; margin: 6px 0; }
+.keypad button { height: 64px; border-radius: 50%; border: 2px solid var(--line); background: var(--panel); color: var(--ink); font: inherit; font-size: 24px; font-weight: 800; cursor: pointer; }
+.keypad button:active { background: var(--panel-2); }
+.link-btn { background: none; border: 0; color: var(--muted); font: inherit; text-decoration: underline; cursor: pointer; min-height: 40px; }
+textarea.code { width: 100%; font: 12px/1.4 ui-monospace, Menlo, monospace; color: var(--ink); background: var(--bg); border: 2px solid var(--line); border-radius: 10px; padding: 8px; word-break: break-all; resize: vertical; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }

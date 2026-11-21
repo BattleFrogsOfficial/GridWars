@@ -9,19 +9,26 @@ import { formatMoney, parseMoney, centsToInput } from './money.js';
 import { todayISO, ymOf, addMonths, monthLabel, dayLabel, dueDateIn } from './dates.js';
 import {
   DEBT_TYPES, ENTRY_KINDS, balancesById, speciesFor, temperFor, monthlyInterest, isRegenerating, pendingInterest,
+  aprOn, isPaused, simDebt, missedPayment,
 } from './debts.js';
 import { simulatePayoff, projectDebt, STRATEGIES } from './planner.js';
 import {
   monthSummary, monthlyPlan, savedSoFar, suggestSplit, toMonthly, CATEGORY_KINDS, DEBT_CATEGORY_ID, OTHER_CATEGORY_ID, FREQUENCIES,
+  goalStatus, sourceMonthly,
 } from './budget.js';
+import { dueRecurring } from './recurring.js';
+import {
+  newAchievements, ACHIEVEMENTS, ACHIEVEMENT_XP, questStatus, QUEST_XP, weekStart, bossPhasesCrossed, BOSS_PHASE_XP, SKINS, unlockedSkins, unlockedTitles,
+} from './game.js';
 import { XP, attackXp, levelInfo, streak } from './player.js';
-import { uid, emptyState } from './state.js';
+import { uid, emptyState, normalizeState } from './state.js';
 import { loadState, saveState, requestPersistence, downloadBackup, readBackup, loadProblem } from './storage.js';
 import { drawSprite } from './sprites.js';
 import { esc, toast, openSheet, openForm, askConfirm } from './ui.js';
 import { lineChart, attachCharts, SERIES_COLORS } from './chart.js';
 import { ACCOUNT_TYPES, accountEvents, accountBalances, totalsByType, accountActivity } from './accounts.js';
 import { moneyTimeline } from './projection.js';
+import { randomHex, hashPin, biometricAvailable, registerBiometric, verifyBiometric, encodeTransfer, decodeTransfer } from './lock.js';
 
 let state = emptyState();
 const ui = { month: ymOf(todayISO()), persisted: null, installPrompt: null };
@@ -39,8 +46,55 @@ function save() {
 
 function commit(fn) {
   fn(state);
+  checkAchievements();
   save();
   render();
+}
+
+// Undo: risky changes keep a copy of the state from just before them for a few seconds.
+let undoSnapshot = null;
+let undoTimer = null;
+function commitUndoable(label, fn) {
+  const before = structuredClone(state);
+  commit(fn);
+  undoSnapshot = before;
+  showUndo(label);
+}
+
+function showUndo(label) {
+  let bar = document.getElementById('undo-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'undo-bar';
+    bar.setAttribute('role', 'status');
+    document.body.appendChild(bar);
+    bar.addEventListener('click', (e) => {
+      if (!e.target.closest('[data-undo]') || !undoSnapshot) return;
+      state = undoSnapshot;
+      undoSnapshot = null;
+      bar.classList.remove('show');
+      save();
+      render();
+      toast('Undone.');
+    });
+  }
+  bar.innerHTML = `<span>${esc(label)}</span><button class="btn" data-undo>Undo</button>`;
+  bar.classList.add('show');
+  clearTimeout(undoTimer);
+  undoTimer = setTimeout(() => {
+    bar.classList.remove('show');
+    undoSnapshot = null;
+  }, 7000);
+}
+
+/** Record achievements earned by the latest change, with XP and a toast. */
+function checkAchievements() {
+  const today = todayISO();
+  for (const a of newAchievements(state, today)) {
+    state.player.achievements[a.id] = today;
+    gainXp(ACHIEVEMENT_XP);
+    setTimeout(() => toast(`Achievement: ${a.title}! +${ACHIEVEMENT_XP} XP`, 'good'), 300);
+  }
 }
 
 function markActive() {
@@ -74,26 +128,77 @@ function runAccrual() {
   }
 }
 
+/** Post paydays and bills whose dates have arrived. */
+function runRecurring() {
+  const r = dueRecurring(state, todayISO(), uid);
+  if (!r.moves.length) return;
+  state.moves.push(...r.moves);
+  for (const n of r.nextDates) {
+    const item = state[n.list].find((x) => x.id === n.id);
+    if (item) item.nextDate = n.nextDate;
+  }
+  save();
+  const pay = r.moves.filter((m) => m.kind === 'payday').length;
+  const bills = r.moves.length - pay;
+  setTimeout(() => toast(`Posted ${[pay && `${pay} payday${pay > 1 ? 's' : ''}`, bills && `${bills} bill${bills > 1 ? 's' : ''}`].filter(Boolean).join(' and ')}.`), 900);
+}
+
 // ---------- derived data ----------
 
 function monsters() {
+  const today = todayISO();
   const bal = balancesById(state.debts, state.ledger);
-  return state.debts.map((d) => {
+  const list = state.debts.map((d) => {
     const balance = bal.get(d.id);
+    const rate = aprOn(d, today); // the rate charged today (after a promo ends, the after-promo rate)
     const species = speciesFor(d, balance);
-    const temper = temperFor(d.apr);
+    const temper = temperFor(rate);
     const maxHp = Math.max(d.startBalance, balance, 1);
+    const paused = isPaused(d, today);
     return {
       ...d,
+      rate,
       balance,
       species,
       temper,
-      monthly: monthlyInterest(balance, d.apr),
-      regen: d.autoInterest && isRegenerating(d, balance),
+      maxHp,
+      paused,
+      promo: d.promoEnds && today < d.promoEnds ? { ends: d.promoEnds, after: d.aprAfter ?? d.apr } : null,
+      monthly: monthlyInterest(balance, rate),
+      regen: d.autoInterest && !paused && isRegenerating({ ...d, apr: rate }, balance),
+      missed: balance > 0 ? missedPayment(d, state.ledger, today) : null,
       hpPct: Math.max(0, Math.min(100, (balance / maxHp) * 100)),
       alive: balance > 0,
+      boss: false,
     };
   });
+  // The boss is the biggest debt still being fought.
+  const boss = list.filter((m) => m.alive && m.include).sort((a, b) => b.balance - a.balance)[0];
+  if (boss && list.filter((m) => m.alive && m.include).length > 1) boss.boss = true;
+  return list;
+}
+
+/** Planned debt payments as one-off extras for the payoff simulation (only what's above each minimum). */
+function plannedExtras(active) {
+  const today = todayISO();
+  const now = ymOf(today);
+  const out = [];
+  for (const x of state.scheduled) {
+    if (x.kind !== 'debt') continue;
+    const d = active.find((m) => m.id === x.debtId);
+    if (!d || x.amount <= d.minPayment) continue;
+    let date = x.date;
+    for (let i = 0; i < 360; i++) {
+      if (date > today) {
+        const [a, b] = now.split('-').map(Number);
+        const [c, e] = ymOf(date).split('-').map(Number);
+        out.push({ id: d.id, month: Math.max(1, c * 12 + e - (a * 12 + b)), amount: x.amount - d.minPayment });
+      }
+      if (x.repeat !== 'monthly') break;
+      date = dueDateIn(addMonths(ymOf(date), 1), x.day || Number(date.slice(8)));
+    }
+  }
+  return out;
 }
 
 /** Every debt still owed costs its minimum each month, benched ones (like a mortgage) included. */
@@ -115,9 +220,12 @@ function currentPlan() {
   const auto = autoExtra(active);
   const extra = state.settings.extraCents ?? auto.extra;
   const strategy = state.settings.strategy;
-  const plan = simulatePayoff(active, extra, strategy);
-  const baseline = simulatePayoff(active, 0, strategy);
-  return { active, auto, extra, strategy, plan, baseline };
+  const today = todayISO();
+  const sims = active.map((m) => simDebt(m, m.balance, today));
+  const extras = plannedExtras(active);
+  const plan = simulatePayoff(sims, extra, strategy, 600, extras);
+  const baseline = simulatePayoff(sims, 0, strategy);
+  return { active, auto, extra, strategy, plan, baseline, extras };
 }
 
 const hasAnyData = () => state.debts.length || state.incomes.length || state.expenses.length || state.incomeSources.length || state.bills.length;
@@ -136,8 +244,9 @@ function paintSprites(root) {
   }
 }
 
-function hpBar(pct, label = '') {
-  return `<div class="hp" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pct)}"><div class="hp-fill" style="width:${pct}%"></div>${label ? `<span>${label}</span>` : ''}</div>`;
+function hpBar(pct, label = '', phases = false) {
+  const marks = phases ? [75, 50, 25].map((p) => `<i class="phase" style="left:${p}%"></i>`).join('') : '';
+  return `<div class="hp ${phases ? 'boss-hp' : ''}" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pct)}"><div class="hp-fill" style="width:${pct}%"></div>${marks}${label ? `<span>${label}</span>` : ''}</div>`;
 }
 
 function meter(spent, limit) {
@@ -169,7 +278,7 @@ function header(title, sub = '') {
 // ---------- tab 1: plan ----------
 
 function planView() {
-  const { active, auto, extra, strategy, plan, baseline } = currentPlan();
+  const { active, auto, extra, strategy, plan, baseline, extras } = currentPlan();
   const now = ymOf(todayISO());
   const ms = monsters();
 
@@ -231,7 +340,7 @@ function planView() {
           <div><small>Extra / mo</small><b>${fmt(extra)}</b></div>
           <div><small>Total / mo</small><b>${fmt(plan.budget)}</b></div>
         </div>
-        <p class="hint">${state.settings.extraCents == null ? `Extra comes from the Extra debt payments line in your budget (${fmt(auto.attack)}).` : 'Extra set by hand.'}</p>
+        <p class="hint">${state.settings.extraCents == null ? `Extra comes from the Extra debt payments line in your budget (${fmt(auto.attack)}).` : 'Extra set by hand.'}${extras.length ? ` Planned debt payments above their minimums are included (${extras.length}).` : ''}</p>
         ${(() => { const lo = monthlyPlan(state, debtMinsTotal()).leftover; return state.incomeSources.length && lo < 0 ? `<p class="bad">Your bills and minimum payments are ${fmt(-lo)} more than your income each month.</p>` : ''; })()}
         <button class="btn" data-action="set-extra">Change extra</button>
       </section>
@@ -280,13 +389,46 @@ function planView() {
           </li>`).join('')}
       </ul>
       <p class="hint">Right column is what was left over (income minus spending, including debt payments).</p>
+    </section>
+    ${reportCard()}`;
+}
+
+/** Spending by budget line over the last few months: total, monthly average, and how often it went over. */
+function reportCard() {
+  const n = ui.reportMonths || 6;
+  const now = ymOf(todayISO());
+  const months = Array.from({ length: n }, (_, i) => addMonths(now, i - n + 1));
+  const sums = months.map((ym) => summary(ym));
+  const lines = [...state.categories.map((c) => ({ id: c.id, name: c.name })), { id: OTHER_CATEGORY_ID, name: 'Unplanned' }]
+    .map((l) => {
+      const rows = sums.map((m) => (l.id === OTHER_CATEGORY_ID ? m.other : m.categories.find((c) => c.id === l.id)));
+      const total = rows.reduce((t, r) => t + (r?.spent || 0), 0);
+      return { ...l, total, avg: Math.round(total / n), over: rows.filter((r) => r?.over).length, limit: rows.at(-1)?.limit || 0 };
+    })
+    .filter((l) => l.total > 0)
+    .sort((a, b) => b.total - a.total);
+  const max = Math.max(1, ...lines.map((l) => l.avg));
+  const bills = sums.reduce((t, m) => t + m.fixed, 0);
+  return `
+    <section class="card">
+      <h2>Where your money went</h2>
+      <div class="seg" role="group" aria-label="Report range">
+        ${[3, 6, 12].map((k) => `<button class="${k === n ? 'on' : ''}" aria-pressed="${k === n}" data-action="report-range" data-key="${k}">${k} months</button>`).join('')}
+      </div>
+      ${lines.length ? `<ul class="report">${lines.map((l) => `
+        <li>
+          <span class="rep-top"><span>${esc(l.name)}${l.over ? ` <small class="bad">over ${l.over}×</small>` : ''}</span><b>${fmt(l.avg)}<small>/mo</small></b></span>
+          <span class="rep-bar"><span style="width:${(l.avg / max) * 100}%"></span></span>
+          <small>${fmt(l.total)} in ${n} months${l.limit ? ` · budget ${fmt(l.limit)}/mo` : ''}</small>
+        </li>`).join('')}</ul>` : '<p class="empty">Log expenses to see where your money goes.</p>'}
+      ${bills ? `<p class="hint">Plus ${fmt(bills)} in fixed bills over the same months.</p>` : ''}
     </section>`;
 }
 
 function projectRow(m, right, cls = '') {
   return `<li><button class="row-btn" data-action="project" data-id="${m.id}">
     ${spriteCanvas(m.species.key, m.temper.key, 2)}
-    <span class="grow">${esc(m.name)}<small>${fmt(m.balance)} · ${m.apr}% APR</small></span>
+    <span class="grow">${esc(m.name)}<small>${fmt(m.balance)} · ${m.rate}% APR${m.promo ? ` until ${dayLabel(m.promo.ends)}` : ''}</small></span>
     <small class="${cls}">${right}</small><span class="chev" aria-hidden="true">›</span>
   </button></li>`;
 }
@@ -305,7 +447,7 @@ function openProjection(id) {
   const m = monsters().find((x) => x.id === id);
   if (!m) return;
   const now = ymOf(todayISO());
-  const debt = { balance: m.balance, apr: m.apr, minPayment: m.minPayment };
+  const debt = simDebt(m, m.balance, todayISO());
   const roundUp = (c, step) => Math.ceil(c / step) * step;
   const defMonthly = roundUp(Math.max(m.minPayment * 2, m.minPayment + 2500, 1000), 500);
   let active = 'monthly';
@@ -314,7 +456,7 @@ function openProjection(id) {
     <div class="pj-head">
       ${spriteCanvas(m.species.key, m.temper.key, 3)}
       <div class="grow"><h2>${esc(m.name)}</h2>
-        <small>${fmt(m.balance)} owed · ${m.apr}% APR · ${fmt(m.minPayment)} minimum</small></div>
+        <small>${fmt(m.balance)} owed · ${m.rate}% APR · ${fmt(m.minPayment)} minimum${m.promo ? ` · ${m.apr}% until ${dayLabel(m.promo.ends)}, then ${m.promo.after}%` : ''}${m.paused ? ` · paused until ${dayLabel(m.pauseUntil)}` : ''}</small></div>
     </div>
     <div class="pj-chart"></div>
 
@@ -465,10 +607,11 @@ function spendView() {
   const debtName = (id) => state.debts.find((d) => d.id === id)?.name || 'debt';
   const entries = [
     ...state.expenses.filter((e) => ymOf(e.date) === ui.month).map((e) => ({
-      id: e.id, date: e.date, amount: e.amount, t: 'expense', sign: '−',
+      id: e.id, date: e.date, amount: e.amount, t: 'expense', sign: '−', card: e.debtId ? debtName(e.debtId) : null,
       label: catName(e.categoryId) + (e.note ? ` · ${e.note}` : ''),
     })),
-    ...state.ledger.filter((e) => !e.auto && e.kind !== 'correction' && ymOf(e.date) === ui.month).map((e) => ({
+    // Card purchases already appear as expenses, so their linked charges are left out here.
+    ...state.ledger.filter((e) => !e.auto && !e.expenseId && e.kind !== 'correction' && ymOf(e.date) === ui.month).map((e) => ({
       id: e.id, date: e.date, amount: Math.abs(e.amount), t: 'ledger', cls: e.kind === 'payment' ? 'attack' : 'charge',
       sign: e.kind === 'payment' ? '−' : '+',
       label: `${e.kind === 'payment' ? 'Payment' : ENTRY_KINDS[e.kind].label}: ${debtName(e.debtId)}${e.note ? ` · ${e.note}` : ''}`,
@@ -494,7 +637,7 @@ function spendView() {
       ${ms.length ? `<ul class="rows">${ms.sort((a, b) => b.balance - a.balance).map((d) => `
         <li><button class="row-btn" data-action="open-debt" data-id="${d.id}">
           ${spriteCanvas(d.species.key, d.temper.key, 2, d.alive ? '' : 'dead')}
-          <span class="grow">${esc(d.name)}<small>${d.alive ? `${typeLabel(d.type)} · ${d.apr}% APR${d.include ? '' : ' · benched'}` : 'Paid off'}</small></span>
+          <span class="grow">${esc(d.name)}<small>${d.alive ? `${typeLabel(d.type)} · ${d.rate}% APR${d.promo ? ` until ${dayLabel(d.promo.ends)}, then ${d.promo.after}%` : ''}${d.paused ? ` · paused until ${dayLabel(d.pauseUntil)}` : ''}${d.missed ? ' · missed payment' : ''}${d.include ? '' : ' · benched'}` : 'Paid off'}</small></span>
           <b>${fmt(Math.max(0, d.balance))}</b>
         </button></li>`).join('')}</ul>` : '<p class="empty">No debts yet. Add each loan or card you owe on.</p>'}
     </section>
@@ -513,8 +656,8 @@ function spendView() {
       <h2>Log</h2>
       ${entries.length ? `<ul class="log">${entries.map((e) => `
         <li class="${e.cls || e.t}">
-          <span class="grow">${esc(e.label)}<small>${dayLabel(e.date)}</small></span>
-          <b>${e.sign}${fmt(e.amount)}</b>
+          <button class="row-btn grow" data-action="edit-entry" data-t="${e.t}" data-id="${e.id}"><span class="grow">${esc(e.label)}<small>${dayLabel(e.date)}${e.card ? ` · on ${esc(e.card)}` : ''}</small></span>
+          <b>${e.sign}${fmt(e.amount)}</b></button>
           <button class="x" data-action="del-entry" data-t="${e.t}" data-id="${e.id}" aria-label="Delete">×</button>
         </li>`).join('')}</ul>` : '<p class="empty">Nothing logged this month.</p>'}
     </section>`;
@@ -523,40 +666,106 @@ function spendView() {
 // ---------- tab 3: battle ----------
 
 function monsterCard(m) {
+  const badges = [
+    m.boss && m.alive ? '<span class="badge boss">BOSS</span>' : '',
+    m.missed ? '<span class="badge bad">Missed payment</span>' : '',
+    m.paused && m.alive ? '<span class="badge">Paused</span>' : '',
+    m.promo && m.alive ? `<span class="badge">${m.apr}% until ${dayLabel(m.promo.ends)}</span>` : '',
+  ].join('');
   return `
-    <button class="card monster ${m.alive ? '' : 'dead'}" data-action="open-debt" data-id="${m.id}">
-      ${spriteCanvas(m.species.key, m.temper.key, 4)}
+    <button class="card monster ${m.alive ? '' : 'dead'} ${m.boss && m.alive ? 'is-boss' : ''} ${m.missed ? 'enraged' : ''}" data-action="open-debt" data-id="${m.id}">
+      ${spriteCanvas(m.species.key, m.temper.key, m.boss && m.alive ? 5 : 4)}
       <div class="grow">
         <div class="m-name">${esc(m.name)}</div>
-        <small>${m.alive ? `${m.temper.name} ${m.species.name}` : 'Defeated'} · ${m.apr}% APR</small>
-        ${m.alive ? hpBar(m.hpPct, fmt(m.balance)) : ''}
-        ${m.regen ? '<small class="bad">Regenerating! The minimum doesn\'t cover interest</small>' : ''}
+        <small>${m.alive ? `${m.temper.name} ${m.species.name}` : 'Defeated'} · ${m.rate}% APR</small>
+        ${badges ? `<div class="badges">${badges}</div>` : ''}
+        ${m.alive ? hpBar(m.hpPct, fmt(m.balance), m.boss) : ''}
+        ${m.missed ? `<small class="bad">Enraged! The ${dayLabel(m.missed.due)} payment was missed. Pay it to calm it down.</small>`
+          : m.regen ? '<small class="bad">Regenerating! The minimum doesn\'t cover interest</small>' : ''}
       </div>
     </button>`;
+}
+
+function questCard() {
+  const qs = questStatus(state, todayISO());
+  return `
+    <section class="card">
+      <h2>This week's quests</h2>
+      <ul class="quests">${qs.map((q) => `
+        <li class="${q.done ? 'done' : ''}">
+          <span class="grow">${esc(q.title)}<small>${q.claimed ? 'Reward claimed' : q.goal > 1 ? `${q.value} of ${q.goal}` : q.done ? 'Complete!' : 'Not yet'}</small>
+            ${q.goal > 1 ? `<span class="meter"><span style="display:block;height:100%;width:${(q.value / q.goal) * 100}%;background:var(--gold)"></span></span>` : ''}</span>
+          ${q.done && !q.claimed ? `<button class="btn primary" data-action="claim-quest" data-key="${q.id}">+${QUEST_XP} XP</button>` : ''}
+        </li>`).join('')}</ul>
+      <p class="hint">New quests every Monday.</p>
+    </section>`;
+}
+
+function achievementsCard() {
+  const got = ACHIEVEMENTS.filter((a) => state.player.achievements[a.id]).length;
+  return `
+    <section class="card">
+      <h2>Achievements <small>${got} of ${ACHIEVEMENTS.length}</small></h2>
+      <ul class="achievements">${ACHIEVEMENTS.map((a) => {
+        const when = state.player.achievements[a.id];
+        return `<li class="${when ? 'got' : ''}"><b>${esc(a.title)}</b><small>${esc(a.desc)}${when ? ` · ${dayLabel(when)}` : ''}</small></li>`;
+      }).join('')}</ul>
+    </section>`;
+}
+
+/** Choose the hero's outfit (unlocked by level) and title (from achievements). */
+function openHero() {
+  const lv = levelInfo(state.player.xp).level;
+  const skins = unlockedSkins(state.player.xp);
+  const titles = unlockedTitles(state);
+  const sheet = openSheet(`
+    <h2>Your hero</h2>
+    <p class="hint">Level ${lv}. New outfits unlock as you level up; titles come from achievements.</p>
+    <h3>Outfit</h3>
+    <div class="skins">${SKINS.map((k) => `
+      <button class="skin ${state.player.skin === k.id ? 'on' : ''}" data-action="skin" data-key="${k.id}" ${skins.includes(k.id) ? '' : 'disabled'}>
+        ${spriteCanvas('hero', k.id, 3)}<small>${skins.includes(k.id) ? esc(k.name) : `Level ${k.level}`}</small>
+      </button>`).join('')}</div>
+    <h3>Title</h3>
+    ${titles.length ? `<div class="chips">${['', ...titles].map((t) => `<button class="chip ${(state.player.title || '') === t ? 'on' : ''}" data-action="title" data-key="${esc(t)}">${t ? esc(t) : 'None'}</button>`).join('')}</div>`
+      : '<p class="empty">Earn achievements to unlock titles.</p>'}`, {
+    onAction: (action, el, { close }) => {
+      close();
+      if (action === 'skin') commit((s) => (s.player.skin = el.dataset.key));
+      if (action === 'title') commit((s) => (s.player.title = el.dataset.key || null));
+      openHero();
+    },
+  });
+  paintSprites(sheet.el);
 }
 
 function battleView() {
   const lv = levelInfo(state.player.xp);
   const st = streak(state.player.days, todayISO());
   const ms = monsters();
-  const active = ms.filter((m) => m.alive && m.include).sort((a, b) => b.balance - a.balance);
+  const active = ms.filter((m) => m.alive && m.include).sort((a, b) => (b.boss - a.boss) || b.balance - a.balance);
   const benched = ms.filter((m) => m.alive && !m.include);
   const dead = ms.filter((m) => !m.alive);
   const totalHp = active.reduce((s, m) => s + m.balance, 0);
   const iOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+  const month = state.settings.setupDone ? summary(ymOf(todayISO())) : null;
+  // Only real budget lines count; unplanned spending has no limit to go over.
+  const overLines = month ? month.categories.filter((c) => c.over).map((c) => c.name) : [];
 
   return `
-    <section class="card hero">
-      ${spriteCanvas('hero', 'calm', 4)}
+    <button class="card hero" data-action="hero">
+      ${spriteCanvas('hero', state.player.skin, 4)}
       <div class="grow">
         <div class="hero-line"><strong>Level ${lv.level}</strong><span>${st} day streak</span></div>
+        ${state.player.title ? `<small class="hero-title">${esc(state.player.title)}</small>` : ''}
         <div class="xp" role="meter" aria-label="Experience" aria-valuenow="${lv.into}" aria-valuemax="${lv.span}"><div style="width:${(lv.into / lv.span) * 100}%"></div></div>
-        <small>${lv.toNext} XP to level ${lv.level + 1}</small>
+        <small>${lv.toNext} XP to level ${lv.level + 1} · tap to change outfit</small>
       </div>
-    </section>
+    </button>
     ${!standalone && iOS && state.settings.setupDone ? `<section class="card tip">Install: tap <b>Share</b> then <b>Add to Home Screen</b>.</section>` : ''}
     ${!standalone && ui.installPrompt ? `<section class="card tip">Install Coin Quest on this device. <button class="btn primary" data-action="install">Install</button></section>` : ''}
+    ${overLines.length && active.length ? `<section class="card danger feed"><b>The monsters are feeding!</b><p>You went over budget on ${overLines.map(esc).join(', ')} this month. Money spent there can't fight debt.</p></section>` : ''}
 
     <div class="battle-head">
       <h1>Battleground</h1>
@@ -569,7 +778,9 @@ function battleView() {
         ${state.settings.setupDone ? '' : '<button class="btn" data-action="goto" data-tab="setup">Set up your account</button>'}</div>
       </section>`}
     ${benched.length ? `<h2 class="section-h">Benched</h2><p class="hint">Kept off the battlefield and out of the plan.</p>${benched.map(monsterCard).join('')}` : ''}
-    ${dead.length ? `<h2 class="section-h">Trophies</h2>${dead.map(monsterCard).join('')}` : ''}`;
+    ${dead.length ? `<h2 class="section-h">Trophies</h2>${dead.map(monsterCard).join('')}` : ''}
+    ${questCard()}
+    ${achievementsCard()}`;
 }
 
 // ---------- money you have (current situation) ----------
@@ -795,7 +1006,7 @@ function recordRecurring(kind) {
       if (!amount) return 'Enter an amount.';
       if (!v.accountId) return 'Pick an account.';
       commit((s) => {
-        s.moves.push({ id: uid(), kind, from: isPay ? null : v.accountId, to: isPay ? v.accountId : null, amount, date: v.date, note: src?.name || '' });
+        s.moves.push({ id: uid(), kind, from: isPay ? null : v.accountId, to: isPay ? v.accountId : null, amount, date: v.date, note: src?.name || '', sourceId: src?.id || null, auto: false });
         markActive();
       });
       toast(isPay ? `+${fmt(amount)} payday recorded.` : `${fmt(amount)} bill recorded.`);
@@ -836,8 +1047,8 @@ const GOALS = {
 function recurringRows(list) {
   return state[list].map((r) => `
     <li><button class="row-btn" data-action="edit-rec" data-list="${list}" data-id="${r.id}">
-      <span class="grow">${esc(r.name)}<small>${fmt(r.amount)} ${freqLabel(r.freq)}</small></span>
-      <b>${fmt(toMonthly(r.amount, r.freq))}<small>/mo</small></b><span class="chev" aria-hidden="true">›</span>
+      <span class="grow">${esc(r.name)}<small>${r.variable ? 'varies, about ' : ''}${fmt(r.amount)} ${freqLabel(r.freq)}${r.nextDate && r.accountId && !r.variable ? ` · next ${dayLabel(r.nextDate)}, posts to ${esc(state.accounts.find((a) => a.id === r.accountId)?.name || 'account')}` : ''}</small></span>
+      <b>${fmt(list === 'incomeSources' ? sourceMonthly(state, r, ymOf(todayISO())) : toMonthly(r.amount, r.freq))}<small>/mo</small></b><span class="chev" aria-hidden="true">›</span>
     </button></li>`).join('');
 }
 
@@ -852,18 +1063,25 @@ function budgetView() {
       ${moneyChartCard()}`;
   }
   const mins = debtMinsTotal();
-  const p = monthlyPlan(state, mins);
+  const p = monthlyPlan(state, mins, ui.month);
   const m = summary(ui.month);
   const alive = monsters().filter((x) => x.alive);
   const hasDebtCat = state.categories.some((c) => c.id === DEBT_CATEGORY_ID);
   const extras = state.incomes.filter((i) => ymOf(i.date) === ui.month).sort((a, b) => b.date.localeCompare(a.date));
   const catRow = (c) => {
-    const saved = c.kind === 'savings' && c.target ? savedSoFar(state, c.id) : null;
+    const goal = c.kind === 'savings' ? goalStatus(state, c, todayISO()) : null;
+    const notes = [
+      c.overridden ? `${monthLabel(ui.month, { month: 'long' })} only` : '',
+      c.carry ? `${c.carry > 0 ? '+' : '−'}${fmt(Math.abs(c.carry))} carried over` : '',
+    ].filter(Boolean);
     return `
       <li><button data-action="${c.id === OTHER_CATEGORY_ID ? 'add-cat' : 'edit-cat'}" data-id="${c.id}">
-        <span class="cat-top"><span>${esc(c.name)} <small>${c.id === OTHER_CATEGORY_ID ? 'not in your plan' : c.kind === 'debt' ? '' : CATEGORY_KINDS[c.kind]}</small></span><span>${fmt(c.spent)} / ${fmt(c.limit)}</span></span>
-        ${meter(c.spent, c.limit)}
-        ${saved != null ? `<small>Saved ${fmt(saved)} of ${fmt(c.target)} goal</small>${meter(Math.min(saved, c.target), c.target)}` : ''}
+        <span class="cat-top"><span>${esc(c.name)} <small>${c.id === OTHER_CATEGORY_ID ? 'not in your plan' : c.kind === 'debt' ? '' : CATEGORY_KINDS[c.kind]}</small></span><span>${fmt(c.spent)} / ${fmt(c.available ?? c.limit)}</span></span>
+        ${meter(c.spent, c.available ?? c.limit)}
+        ${notes.length ? `<small>${notes.join(' · ')}</small>` : ''}
+        ${goal ? `<small>Saved ${fmt(goal.saved)} of ${fmt(c.target)}${goal.done ? ' · goal reached!' : goal.needPerMonth
+          ? ` · ${goal.late ? '<span class="bad">past the deadline</span>' : `needs ${fmt(goal.needPerMonth)}/mo to make ${dayLabel(c.targetDate)} · <span class="${goal.onTrack ? 'good' : 'bad'}">${goal.onTrack ? 'on track' : 'behind'}</span>`}` : ''}</small>
+          ${meter(Math.min(goal.saved, c.target), c.target)}` : ''}
       </button></li>`;
   };
 
@@ -904,8 +1122,8 @@ function budgetView() {
       <h3>Extra income in ${monthLabel(ui.month, { month: 'long' })}</h3>
       ${extras.length ? `<ul class="log">${extras.map((i) => `
         <li class="income">
-          <span class="grow">${esc(i.source || 'Income')}<small>${dayLabel(i.date)}</small></span>
-          <b>+${fmt(i.amount)}</b>
+          <button class="row-btn grow" data-action="edit-entry" data-t="income" data-id="${i.id}"><span class="grow">${esc(i.source || 'Income')}<small>${dayLabel(i.date)}</small></span>
+          <b>+${fmt(i.amount)}</b></button>
           <button class="x" data-action="del-entry" data-t="income" data-id="${i.id}" aria-label="Delete">×</button>
         </li>`).join('')}</ul>` : '<p class="hint">Bonuses, gifts or side jobs that only happen once.</p>'}
       <button class="btn" data-action="add-income">+ Log extra income</button>
@@ -943,8 +1161,9 @@ function setupView() {
       ${done
         ? `<p>Set up in ${monthLabel(state.settings.startMonth || ymOf(todayISO()))}: ${state.incomeSources.length} income source${state.incomeSources.length === 1 ? '' : 's'}, ${state.bills.length} bill${state.bills.length === 1 ? '' : 's'}, ${state.debts.length} debt${state.debts.length === 1 ? '' : 's'}.</p>`
         : '<p>Everything starts empty. Set up your account to add your income, bills, debts and goals. It takes a few minutes, and nothing is saved until you finish.</p>'}
+      ${done ? '<button class="btn primary wide" data-action="update-setup">Update my setup</button>' : ''}
       <button class="btn ${done ? '' : 'primary'} wide" data-action="new-account">Set up a new account</button>
-      ${done ? '<p class="hint">A new account replaces everything. To change one thing, edit it on the Budget or Spending tab.</p>' : ''}
+      ${done ? '<p class="hint">Update my setup keeps everything and lets you change income, bills and goals or add new accounts, debts and budget lines. A new account replaces everything.</p>' : ''}
     </section>
     ${done ? `
       <section class="card">
@@ -966,6 +1185,25 @@ function setupView() {
         <label class="btn">Restore backup<input type="file" accept="application/json,.json" data-change="restore" hidden></label>
       </div>
       <p class="hint">Storage: ${ui.persisted == null ? 'checking…' : ui.persisted ? 'protected from automatic clean-up' : 'the browser may clear it if space runs low. Installing to your home screen helps.'}</p>
+    </section>
+    <section class="card">
+      <h2>Privacy lock</h2>
+      <p>${state.settings.lock.enabled ? `On. The app asks for your passcode${state.settings.lock.credId ? ' or Face ID / fingerprint' : ''} when it opens and after a minute away.` : 'Off. Anyone holding your phone can open the app.'}</p>
+      <div class="row-buttons">
+        <button class="btn ${state.settings.lock.enabled ? '' : 'primary'}" data-action="set-pin">${state.settings.lock.enabled ? 'Change passcode' : 'Set a passcode'}</button>
+        ${state.settings.lock.enabled ? `<button class="btn" data-action="bio">${state.settings.lock.credId ? 'Stop using Face ID' : 'Use Face ID / fingerprint'}</button>
+          <button class="btn" data-action="lock-off">Turn off</button>` : ''}
+      </div>
+      <p class="hint">The lock hides the app from anyone holding your phone. It doesn't encrypt your saved data.</p>
+    </section>
+    <section class="card">
+      <h2>Move to another device</h2>
+      <p>Copy a transfer code here and paste it in the app on your other phone or browser. It also works as a backup you can keep in a note.</p>
+      <div class="row-buttons">
+        <button class="btn" data-action="transfer-out">Copy transfer code</button>
+        <button class="btn" data-action="transfer-in">Paste a transfer code</button>
+      </div>
+      <p class="hint">The code contains all your financial details. Only paste it somewhere private.</p>
     </section>
     <section class="card">
       <h2>Install</h2>
@@ -1016,6 +1254,22 @@ const debtTypeOptions = DEBT_TYPES.map((t) => ({ value: t.key, label: t.label })
 const liveDebtOptions = () => monsters().filter((m) => m.alive).map((m) => ({ value: m.id, label: `${m.name} (${fmt(m.balance)})` }));
 
 /** With `draft` (an array), the new debt is added to it instead of saved: used by account setup. */
+/** Optional details: promo rates and payment pauses (deferment/forbearance). */
+function debtDetailFields(m = null) {
+  return [
+    { name: 'promoEnds', label: 'Promo rate ends (optional)', type: 'date', value: m?.promoEnds || '', hint: 'For a 0% or intro rate: the day it ends. The rate above applies until then.' },
+    { name: 'aprAfter', label: 'Rate after the promo (APR %)', type: 'percent', value: m?.aprAfter ?? '' },
+    { name: 'pauseUntil', label: 'Payments paused until (optional)', type: 'date', value: m?.pauseUntil || '', hint: 'Deferment or forbearance: no payment is due through this date.' },
+    { name: 'pauseAccrues', label: 'Interest builds up while paused', type: 'checkbox', value: m ? m.pauseAccrues : true, hint: 'Turn off for subsidized federal loans in deferment.' },
+    { name: 'capitalize', label: 'Add unpaid interest to the balance when the pause ends', type: 'checkbox', value: m ? m.capitalize : true },
+  ];
+}
+
+function checkDebtDetails(v) {
+  if (v.promoEnds && v.aprAfter == null) return 'Enter the rate that applies after the promo ends.';
+  return '';
+}
+
 function addDebt(onDone, draft = null) {
   openForm({
     title: 'New debt',
@@ -1025,17 +1279,21 @@ function addDebt(onDone, draft = null) {
       { name: 'type', label: 'Type', type: 'select', options: debtTypeOptions, value: 'credit' },
       { name: 'balance', label: 'Current balance', type: 'money', required: true, positive: true },
       { name: 'apr', label: 'Interest rate (APR %)', type: 'percent', required: true },
-      { name: 'minPayment', label: 'Minimum monthly payment', type: 'money', required: true },
+      { name: 'minPayment', label: 'Minimum monthly payment', type: 'money', required: true, hint: 'On an income-driven student loan plan, enter your plan payment.' },
       { name: 'dueDay', label: 'Due day of month (1–31)', type: 'int', required: true, min: 1, maxValue: 31, value: 1 },
       { name: 'include', label: 'Fight this debt', type: 'checkbox', value: true, hint: 'Uncheck to keep it (for example a mortgage) off the battleground and out of the plan.' },
-      { name: 'autoInterest', label: 'Add interest automatically each month', type: 'checkbox', value: true },
+      { name: 'autoInterest', label: 'Add interest automatically each month', type: 'checkbox', value: true, hint: 'Credit cards are charged daily interest, and none for a month you pay the previous balance in full.' },
+      ...debtDetailFields(),
     ],
     submitLabel: 'Add debt',
     onSubmit: (v) => {
+      const err = checkDebtDetails(v);
+      if (err) return err;
       const today = todayISO();
       const debt = {
         id: uid(), name: v.name, type: v.type, startBalance: v.balance, apr: v.apr, minPayment: v.minPayment,
         dueDay: v.dueDay, include: v.include, autoInterest: v.autoInterest, createdAt: today, accruedThrough: today, killRewarded: false,
+        promoEnds: v.promoEnds, aprAfter: v.promoEnds ? v.aprAfter : null, pauseUntil: v.pauseUntil, pauseAccrues: v.pauseAccrues, capitalize: v.capitalize, bossPhases: [],
       };
       if (draft) draft.push(debt);
       else {
@@ -1054,13 +1312,17 @@ function editDebt(m) {
     fields: [
       { name: 'name', label: 'Name', type: 'text', required: true, value: m.name },
       { name: 'type', label: 'Type', type: 'select', options: debtTypeOptions, value: m.type },
-      { name: 'apr', label: 'Interest rate (APR %)', type: 'percent', required: true, value: m.apr },
-      { name: 'minPayment', label: 'Minimum monthly payment', type: 'money', required: true, value: m.minPayment },
+      { name: 'apr', label: 'Interest rate (APR %)', type: 'percent', required: true, value: m.apr, hint: 'If it has a promo rate, enter the promo rate here.' },
+      { name: 'minPayment', label: 'Minimum monthly payment', type: 'money', required: true, value: m.minPayment, hint: 'On an income-driven student loan plan, enter your plan payment.' },
       { name: 'dueDay', label: 'Due day of month (1–31)', type: 'int', required: true, min: 1, maxValue: 31, value: m.dueDay },
       { name: 'include', label: 'Fight this debt', type: 'checkbox', value: m.include },
       { name: 'autoInterest', label: 'Add interest automatically each month', type: 'checkbox', value: m.autoInterest },
+      ...debtDetailFields(m),
     ],
     onSubmit: (v) => {
+      const err = checkDebtDetails(v);
+      if (err) return err;
+      if (!v.promoEnds) v.aprAfter = null;
       commit((s) => {
         const d = s.debts.find((x) => x.id === m.id);
         // Turning auto-interest back on must not back-charge the months it was off.
@@ -1072,13 +1334,14 @@ function editDebt(m) {
     extra: [{ label: 'Delete', action: 'delete', className: 'bad' }],
     onExtra: (action, close) => {
       if (action !== 'delete') return;
-      askConfirm(`Delete ${m.name} and its whole history? This can't be undone.`, { okLabel: 'Delete', danger: true }).then((ok) => {
+      askConfirm(`Delete ${m.name} and its whole history?`, { okLabel: 'Delete', danger: true }).then((ok) => {
         if (!ok) return;
         close();
-        commit((s) => {
+        commitUndoable(`Deleted ${m.name}`, (s) => {
           s.debts = s.debts.filter((d) => d.id !== m.id);
           s.ledger = s.ledger.filter((e) => e.debtId !== m.id);
           s.scheduled = s.scheduled.filter((x) => x.debtId !== m.id);
+          for (const e of s.expenses) if (e.debtId === m.id) e.debtId = null; // card purchases stay as spending
         });
       });
     },
@@ -1119,6 +1382,14 @@ function logDebtEntry(kind, debtId = null, fromBattle = false, prefill = {}, onD
         if (isAttack) {
           gainXp(attackXp(v.amount));
           const d = s.debts.find((x) => x.id === m.id);
+          if (m.boss) {
+            const crossed = bossPhasesCrossed(m.maxHp, m.balance, m.balance - v.amount, d.bossPhases);
+            if (crossed.length && m.balance - v.amount > 0) {
+              d.bossPhases.push(...crossed);
+              gainXp(BOSS_PHASE_XP * crossed.length);
+              setTimeout(() => toast(`Boss staggered! ${m.name} is below ${Math.min(...crossed)}% HP. +${BOSS_PHASE_XP * crossed.length} XP`, 'good'), 400);
+            }
+          }
           if (m.balance - v.amount <= 0 && !d.killRewarded) {
             d.killRewarded = true;
             gainXp(XP.kill[m.species.key] || 100);
@@ -1167,9 +1438,13 @@ function openDebt(id, hit = 0) {
     <h2>${esc(m.name)}</h2>
     <p class="hint">${m.alive ? `${m.temper.name} ${m.species.name}` : 'Defeated'} · ${typeLabel(m.type)}${m.include ? '' : ' · Benched'}</p>
     ${hpBar(m.hpPct, `${fmt(Math.max(0, m.balance))} HP`)}
+    ${m.missed ? `<p class="bad">Missed payment: less than the minimum was paid for the ${dayLabel(m.missed.due)} due date. Late fees and a higher rate may follow.</p>` : ''}
     ${m.regen ? `<p class="bad">It heals ${fmt(m.monthly)} a month but the minimum only hits for ${fmt(m.minPayment)}. Pay more than the minimum to make progress.</p>` : ''}
+    ${m.promo ? `<p class="hint">Promo rate: ${m.apr}% until ${dayLabel(m.promo.ends)}, then ${m.promo.after}%.</p>` : ''}
+    ${m.paused ? `<p class="hint">Payments paused until ${dayLabel(m.pauseUntil)}. Interest ${m.pauseAccrues ? `builds up${m.capitalize ? ' and is added to the balance when the pause ends' : ''}` : "doesn't build up"}.</p>` : ''}
+    ${m.boss && m.alive ? `<p class="hint">Boss: bonus XP when it drops below 75%, 50% and 25% HP.</p>` : ''}
     <div class="stats">
-      <div><small>APR</small><b>${m.apr}%</b></div>
+      <div><small>APR</small><b>${m.rate}%</b></div>
       <div><small>Regen / mo</small><b>${fmt(m.monthly)}</b></div>
       <div><small>Minimum</small><b>${fmt(m.minPayment)}</b></div>
       <div><small>Due day</small><b>${m.dueDay}</b></div>
@@ -1186,8 +1461,8 @@ function openDebt(id, hit = 0) {
     <h3>History</h3>
     ${own.length ? `<ul class="log">${own.slice(0, 50).map((e) => `
       <li class="${e.amount < 0 ? 'income' : 'expense'}">
-        <span class="grow">${ENTRY_KINDS[e.kind].label}${e.note ? ` · ${esc(e.note)}` : ''}<small>${dayLabel(e.date)}</small></span>
-        <b>${e.amount < 0 ? '−' : '+'}${fmt(Math.abs(e.amount))}</b>
+        <button class="row-btn grow" data-action="edit-ledger" data-id="${e.id}"><span class="grow">${ENTRY_KINDS[e.kind].label}${e.note ? ` · ${esc(e.note)}` : ''}<small>${dayLabel(e.date)}${e.expenseId ? ' · from an expense' : ''}</small></span>
+        <b>${e.amount < 0 ? '−' : '+'}${fmt(Math.abs(e.amount))}</b></button>
         <button class="x" data-action="del-ledger" data-id="${e.id}" aria-label="Delete">×</button>
       </li>`).join('')}</ul>` : '<p class="empty">No history yet.</p>'}
     <p class="hint">Started at ${fmt(m.startBalance)} on ${dayLabel(m.createdAt)}.</p>`;
@@ -1199,10 +1474,14 @@ function openDebt(id, hit = 0) {
         askConfirm('Delete this history entry? The balance will be recalculated.', { okLabel: 'Delete', danger: true }).then((ok) => {
           if (!ok) return;
           close();
-          commit((s) => (s.ledger = s.ledger.filter((e) => e.id !== el.dataset.id)));
+          deleteLedgerEntry(el.dataset.id);
           openDebt(id);
         });
         return;
+      }
+      if (action === 'edit-ledger') {
+        close();
+        return editLedgerEntry(state.ledger.find((e) => e.id === el.dataset.id));
       }
       close();
       if (action === 'attack') logDebtEntry('payment', m.id, true);
@@ -1250,34 +1529,144 @@ function expenseOptions() {
   ];
 }
 
-/** Log an expense. `prefill` fills the form (used when a planned payment happens); onDone runs after saving. */
-function addExpense(prefill = {}, onDone = null) {
+/** "Paid with": an account, or a credit card/other debt (the purchase adds to that debt). */
+function paidWithField(current = {}) {
+  const bal = accountBalances(state);
+  const accts = state.accounts.filter((a) => a.type !== 'invest').map((a) => ({ value: `a:${a.id}`, label: `${a.name} · ${fmt(bal.get(a.id))}` }));
+  const cards = monsters().filter((m) => m.type === 'credit' || m.type === 'other').map((m) => ({ value: `d:${m.id}`, label: `${m.name} (adds to the card)` }));
+  if (!accts.length && !cards.length) return [];
+  const value = current.debtId ? `d:${current.debtId}` : current.accountId ? `a:${current.accountId}`
+    : current.accountId === null && current.id ? '' : accts.find((o) => state.accounts.find((a) => `a:${a.id}` === o.value)?.type === 'cash')?.value || accts[0]?.value || '';
+  return [{ name: 'paidWith', label: 'Paid with', type: 'select', options: [...accts, ...cards, { value: '', label: "Don't track" }], value }];
+}
+
+const parsePaidWith = (v) => ({
+  accountId: v?.startsWith('a:') ? v.slice(2) : null,
+  debtId: v?.startsWith('d:') ? v.slice(2) : null,
+});
+
+/** Apply an expense's side effects: a card purchase becomes a linked charge on that debt. */
+function syncCardCharge(s, e) {
+  s.ledger = s.ledger.filter((x) => x.expenseId !== e.id);
+  if (e.debtId) s.ledger.push({ id: uid(), debtId: e.debtId, kind: 'charge', amount: e.amount, date: e.date, note: e.note || catName(e.categoryId), auto: false, accountId: null, expenseId: e.id });
+}
+
+/**
+ * Log or edit an expense. `prefill` fills a new one (used when a planned payment happens); onDone runs inside the save.
+ * With `existing`, the form edits it and offers Delete.
+ */
+function expenseForm(existing = null, prefill = {}, onDone = null) {
   const options = expenseOptions();
-  const acct = withAccount('Paid from', ['cash', 'savings']);
-  if (acct[0] && prefill.accountId !== undefined) acct[0].value = prefill.accountId || '';
+  const base = existing || prefill;
   openForm({
-    title: prefill.title || 'Log expense',
-    intro: `Pick the budget line it comes from. For debt payments use “+ Debt payment”.${state.accounts.some((a) => a.type === 'savings') ? ' Money logged to a savings line moves into your savings account.' : ''}`,
+    title: existing ? 'Edit expense' : prefill.title || 'Log expense',
+    intro: existing ? '' : `Pick the budget line it comes from. For debt payments use “+ Debt payment”.${state.accounts.some((a) => a.type === 'savings') ? ' Money logged to a savings line moves into your savings account.' : ''}`,
     fields: [
-      { name: 'amount', label: 'Amount', type: 'money', required: true, positive: true, value: prefill.amount ?? '' },
-      { name: 'categoryId', label: 'Budget line', type: 'select', options, value: options.some((o) => o.value === prefill.categoryId) ? prefill.categoryId : options[0].value },
-      ...acct,
-      { name: 'note', label: 'Note (optional)', type: 'text', value: prefill.note || '' },
-      { name: 'date', label: 'Date', type: 'date', value: prefill.date || todayISO() },
+      { name: 'amount', label: 'Amount', type: 'money', required: true, positive: true, value: base.amount ?? '' },
+      { name: 'categoryId', label: 'Budget line', type: 'select', options, value: options.some((o) => o.value === base.categoryId) ? base.categoryId : options[0].value },
+      ...paidWithField(existing || { accountId: prefill.accountId }),
+      { name: 'note', label: 'Note (optional)', type: 'text', value: base.note || '' },
+      { name: 'date', label: 'Date', type: 'date', value: base.date || todayISO() },
     ],
+    extra: existing ? [{ label: 'Delete', action: 'delete', className: 'bad' }] : [],
+    onExtra: (_a, close) => {
+      close();
+      deleteExpense(existing.id);
+    },
     onSubmit: (v) => {
+      const { accountId, debtId } = parsePaidWith(v.paidWith);
       const isSaving = state.categories.find((c) => c.id === v.categoryId)?.kind === 'savings';
-      const savingsAcct = isSaving ? state.accounts.find((a) => a.type === 'savings' && a.id !== v.accountId)?.id || null : null;
+      const toAccountId = isSaving && !debtId ? state.accounts.find((a) => a.type === 'savings' && a.id !== accountId)?.id || null : null;
+      const fields = { amount: v.amount, categoryId: v.categoryId, note: v.note || '', date: v.date, accountId, toAccountId, debtId };
+      if (existing) {
+        commitUndoable('Expense changed', (s) => {
+          const e = s.expenses.find((x) => x.id === existing.id);
+          Object.assign(e, fields);
+          syncCardCharge(s, e);
+        });
+        return;
+      }
       commit((s) => {
-        s.expenses.push({ id: uid(), amount: v.amount, categoryId: v.categoryId, note: v.note || '', date: v.date, accountId: v.accountId || null, toAccountId: savingsAcct });
+        const e = { id: uid(), ...fields };
+        s.expenses.push(e);
+        syncCardCharge(s, e);
         markActive();
         gainXp(XP.log);
         onDone?.(s);
       });
       const cat = summary(ymOf(v.date)).categories.find((c) => c.id === v.categoryId);
       const over = cat && cat.limit > 0 && cat.remaining < 0;
-      toast(over ? `${cat.name} is over budget by ${fmt(-cat.remaining)}` : `Logged. +${XP.log} XP`, over ? 'bad' : '');
+      const card = debtId ? state.debts.find((d) => d.id === debtId)?.name : null;
+      toast(over ? `${cat.name} is over budget by ${fmt(-cat.remaining)}` : card ? `Logged on ${card}. It grew by ${fmt(v.amount)}.` : `Logged. +${XP.log} XP`, over || card ? 'bad' : '');
     },
+  });
+}
+
+const addExpense = (prefill = {}, onDone = null) => expenseForm(null, prefill, onDone);
+
+function deleteExpense(id) {
+  commitUndoable('Expense deleted', (s) => {
+    s.expenses = s.expenses.filter((x) => x.id !== id);
+    s.ledger = s.ledger.filter((x) => x.expenseId !== id);
+  });
+}
+
+function deleteLedgerEntry(id) {
+  const e = state.ledger.find((x) => x.id === id);
+  commitUndoable('Entry deleted', (s) => {
+    s.ledger = s.ledger.filter((x) => x.id !== id);
+    if (e?.expenseId) s.expenses = s.expenses.filter((x) => x.id !== e.expenseId); // a card purchase: remove the expense too
+  });
+}
+
+/** Edit a payment, charge, fee or balance update on a debt. */
+function editLedgerEntry(e) {
+  if (!e) return;
+  if (e.expenseId) return expenseForm(state.expenses.find((x) => x.id === e.expenseId));
+  const isPay = e.kind === 'payment';
+  openForm({
+    title: `Edit ${ENTRY_KINDS[e.kind].label.toLowerCase()}`,
+    intro: e.kind === 'correction' ? 'A balance update records the difference from what the app expected. Enter a negative amount for a decrease.' : '',
+    fields: [
+      e.kind === 'correction'
+        ? { name: 'amount', label: 'Change', type: 'text', required: true, value: centsToInput(e.amount) }
+        : { name: 'amount', label: 'Amount', type: 'money', required: true, positive: true, value: Math.abs(e.amount) },
+      ...(isPay ? withAccount('Paid from', ['cash', 'savings']).map((f) => ({ ...f, value: e.accountId || '' })) : []),
+      { name: 'date', label: 'Date', type: 'date', value: e.date },
+      { name: 'note', label: 'Note (optional)', type: 'text', value: e.note },
+    ],
+    extra: [{ label: 'Delete', action: 'delete', className: 'bad' }],
+    onExtra: (_a, close) => {
+      close();
+      deleteLedgerEntry(e.id);
+    },
+    onSubmit: (v) => {
+      let amount;
+      if (e.kind === 'correction') {
+        amount = parseMoney(v.amount);
+        if (amount == null) return 'Enter an amount, like -25.00';
+      } else amount = isPay ? -v.amount : v.amount;
+      commitUndoable('Entry changed', (s) => Object.assign(s.ledger.find((x) => x.id === e.id), { amount, date: v.date, note: v.note || '', ...(isPay ? { accountId: v.accountId || null } : {}) }));
+    },
+  });
+}
+
+/** Edit one-off extra income. */
+function editIncome(i) {
+  openForm({
+    title: 'Edit income',
+    fields: [
+      { name: 'amount', label: 'Amount', type: 'money', required: true, positive: true, value: i.amount },
+      { name: 'source', label: 'What was it?', type: 'text', value: i.source },
+      ...withAccount('Into').map((f) => ({ ...f, value: i.accountId || '' })),
+      { name: 'date', label: 'Date', type: 'date', value: i.date },
+    ],
+    extra: [{ label: 'Delete', action: 'delete', className: 'bad' }],
+    onExtra: (_a, close) => {
+      close();
+      commitUndoable('Income deleted', (s) => (s.incomes = s.incomes.filter((x) => x.id !== i.id)));
+    },
+    onSubmit: (v) => commitUndoable('Income changed', (s) => Object.assign(s.incomes.find((x) => x.id === i.id), { amount: v.amount, source: v.source || '', date: v.date, accountId: v.accountId || null })),
   });
 }
 
@@ -1413,8 +1802,11 @@ function logScheduled(item) {
 function categoryForm(c, preset = {}) {
   const isNew = !c;
   const isDebt = (c?.id ?? preset.id) === DEBT_CATEGORY_ID;
-  const plan = monthlyPlan(state, debtMinsTotal());
-  const free = plan.unallocated + (c?.limit || 0);
+  const ym = ui.month;
+  const plan = monthlyPlan(state, debtMinsTotal(), ym);
+  const current = c ? (c.overrides && ym in c.overrides ? c.overrides[ym] : c.limit) : null;
+  const free = plan.unallocated + (current || 0);
+  const monthName = monthLabel(ym, { month: 'long' });
   openForm({
     title: isNew ? (isDebt ? 'Extra debt payments' : 'Add to your budget') : `Edit ${c.name}`,
     intro: `${isDebt ? 'Money on top of your minimum payments each month. It becomes extra damage on your debts in your plan. ' : ''}You have <b>${fmt(free)}</b> a month not yet assigned.`,
@@ -1424,28 +1816,40 @@ function categoryForm(c, preset = {}) {
         name: 'kind', label: 'Type', type: 'select', value: c?.kind || preset.kind || 'need',
         options: Object.entries(CATEGORY_KINDS).filter(([k]) => k !== 'debt').map(([value, label]) => ({ value, label })),
       }]),
-      { name: 'limit', label: 'Amount per month', type: 'money', required: true, value: c?.limit ?? '' },
-      ...(isDebt ? [] : [{
-        name: 'target', label: 'Savings goal total (optional)', type: 'money', value: c?.target ?? '',
-        hint: 'For savings: the total you want to reach. Log money you set aside as an expense on this line to track progress.',
-      }]),
+      { name: 'limit', label: 'Amount per month', type: 'money', required: true, value: current ?? '' },
+      ...(isNew ? [] : [{ name: 'onlyThisMonth', label: `Only for ${monthName}`, type: 'checkbox', value: !!(c.overrides && ym in c.overrides), hint: `Use a different amount just in ${monthName}; other months keep ${fmt(c.limit)}.` }]),
+      ...(isDebt ? [] : [
+        { name: 'rollover', label: 'Carry unspent money to next month', type: 'checkbox', value: c?.rollover ?? false, hint: 'Good for costs that come and go, like car repairs or gifts. Overspending carries too.' },
+        { name: 'target', label: 'Savings goal total (optional)', type: 'money', value: c?.target ?? '', hint: 'For savings: the total you want to reach. Log money you set aside as an expense on this line to track it.' },
+        { name: 'targetDate', label: 'Reach it by (optional)', type: 'date', value: c?.targetDate || '', hint: 'Shows how much to put aside each month to make it in time.' },
+      ]),
     ],
     extra: isNew ? [] : [{ label: 'Delete', action: 'delete', className: 'bad' }],
     onExtra: (action, close) => {
       askConfirm(`Remove ${c.name} from your budget? Anything already logged to it moves to Unplanned.`, { okLabel: 'Remove', danger: true }).then((ok) => {
         if (!ok) return;
         close();
-        commit((s) => {
+        commitUndoable(`Removed ${c.name}`, (s) => {
           s.categories = s.categories.filter((x) => x.id !== c.id);
           for (const e of s.expenses) if (e.categoryId === c.id) e.categoryId = OTHER_CATEGORY_ID;
         });
       });
     },
     onSubmit: (v) => {
-      const fields = { name: v.name, kind: isDebt ? 'debt' : v.kind, limit: v.limit, target: isDebt ? null : v.target || null };
+      const fields = {
+        name: v.name, kind: isDebt ? 'debt' : v.kind, target: isDebt ? null : v.target || null,
+        targetDate: isDebt ? null : v.targetDate || null, rollover: isDebt ? false : !!v.rollover,
+      };
       commit((s) => {
-        if (isNew) s.categories.push({ id: isDebt ? DEBT_CATEGORY_ID : uid(), ...fields });
-        else Object.assign(s.categories.find((x) => x.id === c.id), fields);
+        if (isNew) return void s.categories.push({ id: isDebt ? DEBT_CATEGORY_ID : uid(), limit: v.limit, overrides: {}, ...fields });
+        const x = s.categories.find((y) => y.id === c.id);
+        Object.assign(x, fields);
+        x.overrides = { ...(x.overrides || {}) };
+        if (v.onlyThisMonth) x.overrides[ym] = v.limit;
+        else {
+          x.limit = v.limit;
+          delete x.overrides[ym];
+        }
       });
     },
   });
@@ -1463,20 +1867,26 @@ function recurringForm(list, item = null) {
       { name: 'name', label: 'Name', type: 'text', required: true, value: item?.name || '', placeholder: isIncome ? 'e.g. Paycheck' : 'e.g. Rent' },
       { name: 'amount', label: 'Amount', type: 'money', required: true, positive: true, value: item?.amount ?? '' },
       { name: 'freq', label: 'How often', type: 'select', options: FREQ_OPTIONS, value: item?.freq || (isIncome ? 'weekly' : 'monthly') },
+      ...(isIncome ? [{ name: 'variable', label: 'The amount varies (irregular income)', type: 'checkbox', value: item?.variable ?? false, hint: 'Your budget uses the average of the paydays you record (+ Payday) over the last 3 months, and the amount above until then.' }] : []),
+      { name: 'nextDate', label: isIncome ? 'Next payday (optional)' : 'Next due date (optional)', type: 'date', value: item?.nextDate || '', hint: 'With a date and an account, it posts to the account automatically each time. A date of today or earlier posts right away.' },
+      ...(state.accounts.length ? [{ ...accountField(isIncome ? 'Paid into' : 'Paid from', isIncome ? ['cash', 'savings', 'invest'] : ['cash', 'savings']), value: item ? item.accountId || '' : accountField('x', ['cash']).value }] : []),
     ],
     extra: item ? [{ label: 'Delete', action: 'delete', className: 'bad' }] : [],
     onExtra: (_a, close) => {
-      askConfirm(`Delete ${item.name}?`, { okLabel: 'Delete', danger: true }).then((ok) => {
-        if (!ok) return;
-        close();
-        commit((s) => (s[list] = s[list].filter((x) => x.id !== item.id)));
-      });
+      close();
+      commitUndoable(`Deleted ${item.name}`, (s) => (s[list] = s[list].filter((x) => x.id !== item.id)));
     },
     onSubmit: (v) => {
+      const fields = {
+        name: v.name, amount: v.amount, freq: v.freq, variable: isIncome && !!v.variable,
+        nextDate: v.nextDate || null, day: v.nextDate ? Number(v.nextDate.slice(8)) : null, accountId: v.accountId || null,
+      };
       commit((s) => {
-        if (item) Object.assign(s[list].find((x) => x.id === item.id), v);
-        else s[list].push({ id: uid(), ...v });
+        if (item) Object.assign(s[list].find((x) => x.id === item.id), fields);
+        else s[list].push({ id: uid(), ...fields });
       });
+      runRecurring();
+      render();
     },
   });
 }
@@ -1508,16 +1918,25 @@ async function startNewAccount() {
   runWizard();
 }
 
-function runWizard() {
+/**
+ * The guided setup. A new account starts from scratch and replaces everything.
+ * `update` mode starts from what's already there and only changes income, bills and goals, and adds new
+ * accounts, debts and budget lines: nothing is deleted.
+ */
+function runWizard(update = false) {
   const row = (name = '', freq = 'monthly') => ({ name, raw: '', freq });
+  const fromExisting = (list) => state[list].map((r) => ({ ...r, raw: centsToInput(r.amount) }));
+  const existingMins = update ? monsters().filter((m) => m.alive).reduce((t, m) => t + m.minPayment, 0) : 0;
+  const existingLines = update ? state.categories.reduce((t, c) => t + c.limit, 0) : 0;
+  const hasLine = (name) => state.categories.some((c) => c.name.toLowerCase() === name.toLowerCase());
   const d = {
     currency: state.settings.currency,
-    income: [row('Paycheck', 'weekly')],
-    money: MONEY_PRESETS.map(([n, type]) => ({ name: n, raw: '', type })),
-    bills: BILL_PRESETS.map((n) => row(n)),
-    everyday: EVERYDAY_PRESETS.map(([n, f]) => row(n, f)),
+    income: update ? fromExisting('incomeSources') : [row('Paycheck', 'weekly')],
+    money: update ? [] : MONEY_PRESETS.map(([n, type]) => ({ name: n, raw: '', type })),
+    bills: update ? fromExisting('bills') : BILL_PRESETS.map((n) => row(n)),
+    everyday: update ? [] : EVERYDAY_PRESETS.map(([n, f]) => row(n, f)),
     debts: [],
-    goals: { payDebt: true, emergency: true, saveFor: false, fun: true, spendLess: false },
+    goals: update ? { ...state.goals } : { payDebt: true, emergency: true, saveFor: false, fun: true, spendLess: false },
     emergencyRaw: '',
     saveForName: '',
     saveForRaw: '',
@@ -1537,7 +1956,7 @@ function runWizard() {
     const income = monthlyOf(d.income);
     const bills = monthlyOf(d.bills);
     const everyday = monthlyOf(d.everyday);
-    const mins = d.debts.reduce((s, x) => s + x.minPayment, 0);
+    const mins = existingMins + d.debts.reduce((s, x) => s + x.minPayment, 0);
     return { income, bills, everyday, mins, leftover: income - bills - everyday - mins };
   };
 
@@ -1560,11 +1979,13 @@ function runWizard() {
   function buildAlloc() {
     const t = totals();
     const keys = [];
-    if (d.goals.payDebt && d.debts.length) keys.push('debt');
-    if (d.goals.emergency) keys.push('emergency');
-    if (d.goals.saveFor) keys.push('saveFor');
-    if (d.goals.fun) keys.push('fun');
-    const split = suggestSplit(t.leftover, keys);
+    // When updating, only goals that don't already have a budget line get one.
+    const debtCount = d.debts.length + (update ? monsters().filter((m) => m.alive).length : 0);
+    if (d.goals.payDebt && debtCount && !(update && state.categories.some((c) => c.id === DEBT_CATEGORY_ID))) keys.push('debt');
+    if (d.goals.emergency && !(update && hasLine('Emergency fund'))) keys.push('emergency');
+    if (d.goals.saveFor && !(update && hasLine(d.saveForName.trim() || 'Savings goal'))) keys.push('saveFor');
+    if (d.goals.fun && !(update && hasLine('Fun money'))) keys.push('fun');
+    const split = suggestSplit(t.leftover - existingLines, keys);
     const names = { debt: 'Extra debt payments', emergency: 'Emergency fund', saveFor: d.saveForName.trim() || 'Savings goal', fun: 'Fun money' };
     d.alloc = keys.map((k) => ({ k, name: names[k], raw: centsToInput(split[k]) }));
   }
@@ -1585,7 +2006,9 @@ function runWizard() {
         const m = moneyTotals();
         return `
           <h2>What do you have right now?</h2>
-          <p class="intro">Today's balances. Leave blank anything you don't have. From now on, everything you log keeps these up to date.</p>
+          ${update ? `${state.accounts.length ? `<ul class="rows">${(() => { const bal = accountBalances(state); return state.accounts.map((a) => `<li><span class="grow">${esc(a.name)}<small>${ACCOUNT_TYPES[a.type]} · kept as is</small></span><b>${money(bal.get(a.id))}</b></li>`).join(''); })()}</ul>` : ''}
+            <p class="intro">Add any new accounts below. To change a balance, use Update balance on the Budget tab.</p>`
+            : `<p class="intro">Today's balances. Leave blank anything you don't have. From now on, everything you log keeps these up to date.</p>`}
           ${rowsHtml('money', TYPE_OPTIONS, 'type')}
           <button class="btn" data-action="add-row" data-list="money">+ Add another account</button>
           <p class="wiz-total">Cash <b data-total="m-cash">${money(m.cash)}</b> · Savings <b data-total="m-savings">${money(m.savings)}</b> · Invested <b data-total="m-invest">${money(m.invest)}</b></p>`;
@@ -1604,7 +2027,9 @@ function runWizard() {
       case 'Debts':
         return `
           <h2>What do you owe?</h2>
-          <p class="intro">Student loans, credit cards, car loans, medical bills, a mortgage. Each one becomes a monster to defeat.</p>
+          ${update && state.debts.length ? `<ul class="rows">${monsters().filter((m) => m.alive).map((m) => `<li><span class="grow">${esc(m.name)}<small>${money(m.balance)} · kept as is</small></span><b>${money(m.minPayment)}<small>/mo</small></b></li>`).join('')}</ul>
+            <p class="intro">Add any new debts. To change one, tap it on the Spending tab.</p>`
+            : '<p class="intro">Student loans, credit cards, car loans, medical bills, a mortgage. Each one becomes a monster to defeat.</p>'}
           ${d.debts.length ? `<ul class="rows">${d.debts.map((x, i) => `
             <li><span class="grow">${esc(x.name)}<small>${money(x.startBalance)} · ${x.apr}% APR${x.include ? '' : ' · benched'}</small></span>
               <b>${money(x.minPayment)}<small>/mo</small></b>
@@ -1714,7 +2139,39 @@ function runWizard() {
     return '';
   }
 
+  /** Update mode: merge into the current save instead of replacing it. */
+  function finishUpdate() {
+    const today = todayISO();
+    const merge = (rows, existing, fallback) => rows
+      .filter((r) => amt(r.raw) > 0)
+      .map((r) => {
+        const old = existing.find((x) => x.id === r.id);
+        return { ...(old || { nextDate: null, day: null, accountId: null, variable: false }), id: r.id || uid(), name: r.name.trim() || fallback, amount: amt(r.raw), freq: r.freq };
+      });
+    sheet.close();
+    commitUndoable('Setup updated', (s) => {
+      s.settings.currency = d.currency;
+      s.goals = { ...d.goals };
+      s.incomeSources = merge(d.income, s.incomeSources, 'Income');
+      s.bills = merge(d.bills, s.bills, 'Bill');
+      s.debts.push(...d.debts.map((x) => ({ ...x, createdAt: today, accruedThrough: today })));
+      s.accounts.push(...d.money
+        .filter((r) => String(r.raw).trim() !== '' && amt(r.raw) != null)
+        .map((r) => ({ id: uid(), name: r.name.trim() || ACCOUNT_TYPES[r.type], type: r.type, start: amt(r.raw), createdAt: today })));
+      for (const r of d.everyday.filter((x) => amt(x.raw) > 0)) {
+        s.categories.push({ id: uid(), name: r.name.trim() || 'Everyday', kind: 'need', limit: toMonthly(amt(r.raw), r.freq), target: null, overrides: {} });
+      }
+      for (const a of d.alloc) {
+        const limit = Math.max(0, amt(a.raw) || 0);
+        const line = { debt: [DEBT_CATEGORY_ID, 'debt', null], emergency: [uid(), 'savings', amt(d.emergencyRaw) || null], saveFor: [uid(), 'savings', amt(d.saveForRaw) || null], fun: [uid(), 'want', null] }[a.k];
+        s.categories.push({ id: line[0], name: a.name, kind: line[1], limit, target: line[2], overrides: {} });
+      }
+    });
+    go('budget');
+  }
+
   function finish() {
+    if (update) return finishUpdate();
     const today = todayISO();
     const s = emptyState();
     s.settings.currency = d.currency;
@@ -1799,6 +2256,169 @@ function runWizard() {
   render();
 }
 
+// ---------- privacy lock ----------
+
+let locked = false;
+let hiddenAt = 0;
+let wrongTries = 0;
+let waitUntil = 0;
+
+function showLock() {
+  if (!state.settings.lock.enabled || locked) return;
+  locked = true;
+  for (const d of document.querySelectorAll('dialog[open]')) d.close();
+  let el = document.getElementById('lock');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'lock';
+    document.body.appendChild(el);
+  }
+  let pin = '';
+  let forgot = false;
+  const paint = (msg = '') => {
+    el.innerHTML = `
+      <div class="lock-box">
+        ${spriteCanvas('hero', state.player.skin, 4)}
+        <h2>Coin Quest is locked</h2>
+        <div class="pin-dots" aria-label="${pin.length} digits entered">${'●'.repeat(pin.length) || '&nbsp;'}</div>
+        <p class="lock-msg ${msg ? 'bad' : ''}" role="alert">${msg || 'Enter your passcode'}</p>
+        <div class="keypad">
+          ${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<button data-k="${n}">${n}</button>`).join('')}
+          <button data-k="del" aria-label="Delete">⌫</button><button data-k="0">0</button><button data-k="ok" aria-label="Unlock">OK</button>
+        </div>
+        ${state.settings.lock.credId ? '<button class="btn wide" data-k="bio">Use Face ID / fingerprint</button>' : ''}
+        <button class="link-btn" data-k="forgot">${forgot ? 'Tap again to erase everything on this device' : 'Forgot passcode?'}</button>
+        ${forgot ? '<p class="hint">The only way in without the passcode is to erase this device\'s data. You can restore a backup or transfer code afterwards.</p>' : ''}
+      </div>`;
+    paintSprites(el);
+  };
+  const unlock = () => {
+    locked = false;
+    wrongTries = 0;
+    el.remove();
+  };
+  const tryPin = async () => {
+    if (Date.now() < waitUntil) return paint(`Too many tries. Wait ${Math.ceil((waitUntil - Date.now()) / 1000)} seconds.`);
+    const h = await hashPin(pin, state.settings.lock.salt);
+    if (h === state.settings.lock.pinHash) return unlock();
+    pin = '';
+    wrongTries++;
+    if (wrongTries >= 5) waitUntil = Date.now() + 30_000;
+    el.querySelector('.lock-box')?.classList.add('shake');
+    paint(wrongTries >= 5 ? 'Too many tries. Wait 30 seconds.' : 'Wrong passcode. Try again.');
+  };
+  el.onclick = async (e) => {
+    const k = e.target.closest('[data-k]')?.dataset.k;
+    if (!k) return;
+    if (k === 'bio') {
+      try {
+        if (await verifyBiometric(state.settings.lock.credId)) unlock();
+      } catch {
+        paint('Face ID / fingerprint did not work. Use your passcode.');
+      }
+      return;
+    }
+    if (k === 'forgot') {
+      if (!forgot) {
+        forgot = true;
+        return paint();
+      }
+      state = emptyState();
+      save();
+      unlock();
+      go('setup');
+      return toast('Everything was erased. Restore a backup or transfer code in Settings.');
+    }
+    if (k === 'del') pin = pin.slice(0, -1);
+    else if (k === 'ok') return tryPin();
+    else if (pin.length < 8) pin += k;
+    paint();
+    if (pin.length >= 4 && (await hashPin(pin, state.settings.lock.salt)) === state.settings.lock.pinHash) unlock();
+  };
+  paint();
+}
+
+function setPin() {
+  openForm({
+    title: state.settings.lock.enabled ? 'Change passcode' : 'Set a passcode',
+    intro: '4 to 8 digits. There is no way to recover it, so pick one you will remember.',
+    fields: [
+      { name: 'pin', label: 'New passcode', type: 'pin', required: true },
+      { name: 'again', label: 'Type it again', type: 'pin', required: true },
+    ],
+    onSubmit: (v) => {
+      if (!/^\d{4,8}$/.test(v.pin)) return 'Use 4 to 8 digits.';
+      if (v.pin !== v.again) return "The two passcodes don't match.";
+      const salt = randomHex();
+      hashPin(v.pin, salt).then((pinHash) => {
+        commit((s) => (s.settings.lock = { ...s.settings.lock, enabled: true, pinHash, salt }));
+        toast('Passcode set. The app will lock when it opens and after a minute away.', 'good');
+      });
+    },
+  });
+}
+
+async function toggleBiometric() {
+  if (state.settings.lock.credId) return commit((s) => (s.settings.lock.credId = null));
+  if (!(await biometricAvailable())) return toast("Face ID / fingerprint isn't available here. It works once the app is installed from its website.", 'bad');
+  try {
+    const credId = await registerBiometric();
+    commit((s) => (s.settings.lock.credId = credId));
+    toast('Face ID / fingerprint is on.', 'good');
+  } catch {
+    toast('Face ID / fingerprint was not set up.', 'bad');
+  }
+}
+
+// ---------- device transfer ----------
+
+async function transferOut() {
+  const code = await encodeTransfer(state);
+  openSheet(`
+    <h2>Your transfer code</h2>
+    <p class="intro">Copy all of it. On the other device, open Settings → Paste a transfer code. It holds all your financial details, so keep it private.</p>
+    <textarea class="code" readonly rows="6" aria-label="Transfer code">${esc(code)}</textarea>
+    <p class="hint">${code.length.toLocaleString()} characters.</p>
+    <div class="row-buttons"><button class="btn primary" data-action="copy">Copy</button></div>`, {
+    onAction: (action, _el, { el }) => {
+      if (action !== 'copy') return;
+      const ta = el.querySelector('textarea');
+      navigator.clipboard?.writeText(code).then(() => toast('Copied.'), () => {
+        ta.select();
+        toast('Select all and copy it by hand.');
+      }) ?? (ta.select(), toast('Select all and copy it by hand.'));
+    },
+  });
+}
+
+function transferIn() {
+  const sheet = openSheet(`
+    <h2>Paste a transfer code</h2>
+    <p class="intro">This replaces everything on this device with the data from the code.</p>
+    <textarea class="code" rows="6" aria-label="Transfer code" placeholder="CQ1:…"></textarea>
+    <p class="form-error" role="alert"></p>
+    <div class="row-buttons"><button class="btn primary" data-action="load">Load it</button></div>`, {
+    onAction: async (action, _el, { el, close }) => {
+      if (action !== 'load') return;
+      const err = el.querySelector('.form-error');
+      try {
+        const restored = normalizeState(await decodeTransfer(el.querySelector('textarea').value));
+        if (!(await askConfirm(`Replace everything on this device with this data (${restored.debts.length} debts, ${restored.accounts.length} accounts)?`, { okLabel: 'Replace', title: 'Load transfer code?' }))) return;
+        close();
+        state = restored;
+        runAccrual();
+        runRecurring();
+        save();
+        render();
+        toast('Loaded.', 'good');
+      } catch (e) {
+        err.textContent = e.message || 'That code could not be read.';
+      }
+    },
+  });
+  sheet.el.querySelector('textarea').focus();
+}
+
 // ---------- events ----------
 
 function onClick(e) {
@@ -1818,6 +2438,16 @@ function onClick(e) {
     'add-rec': () => recurringForm(a.dataset.list),
     'edit-rec': () => recurringForm(a.dataset.list, state[a.dataset.list].find((x) => x.id === a.dataset.id)),
     'new-account': startNewAccount,
+    'update-setup': () => runWizard(true),
+    'set-pin': setPin,
+    bio: toggleBiometric,
+    'lock-off': async () => {
+      if (await askConfirm('Turn off the passcode lock?', { okLabel: 'Turn off', title: 'Turn off lock?' })) {
+        commit((s) => (s.settings.lock = { enabled: false, pinHash: null, salt: null, credId: null }));
+      }
+    },
+    'transfer-out': transferOut,
+    'transfer-in': transferIn,
     'add-account': () => accountForm(),
     'open-account': () => openAccount(a.dataset.id),
     payday: () => recordRecurring('payday'),
@@ -1847,10 +2477,30 @@ function onClick(e) {
       ui.month = addMonths(ui.month, Number(a.dataset.d));
       render();
     },
-    'del-entry': async () => {
-      if (!(await askConfirm('Delete this entry?', { okLabel: 'Delete', danger: true }))) return;
-      const key = { income: 'incomes', expense: 'expenses', ledger: 'ledger' }[a.dataset.t];
-      commit((s) => (s[key] = s[key].filter((x) => x.id !== a.dataset.id)));
+    'del-entry': () => {
+      const { t, id } = a.dataset;
+      if (t === 'expense') deleteExpense(id);
+      else if (t === 'ledger') deleteLedgerEntry(id);
+      else commitUndoable('Income deleted', (s) => (s.incomes = s.incomes.filter((x) => x.id !== id)));
+    },
+    'edit-entry': () => {
+      const { t, id } = a.dataset;
+      if (t === 'expense') expenseForm(state.expenses.find((x) => x.id === id));
+      else if (t === 'ledger') editLedgerEntry(state.ledger.find((x) => x.id === id));
+      else editIncome(state.incomes.find((x) => x.id === id));
+    },
+    hero: openHero,
+    'claim-quest': () => {
+      const ws = weekStart(todayISO());
+      commit((s) => {
+        s.player.quests[ws] = [...(s.player.quests[ws] || []), a.dataset.key];
+        gainXp(QUEST_XP);
+      });
+      toast(`Quest complete! +${QUEST_XP} XP`, 'good');
+    },
+    'report-range': () => {
+      ui.reportMonths = Number(a.dataset.key);
+      render();
     },
     'set-strategy': () => commit((s) => (s.settings.strategy = a.dataset.key)),
     'set-extra': () => {
@@ -1902,6 +2552,8 @@ async function onChange(e) {
       if (!(await askConfirm(`Replace everything on this device with this backup (${restored.debts.length} debts, ${restored.incomes.length + restored.expenses.length} budget entries)?`, { okLabel: 'Restore', title: 'Restore backup?' }))) return;
       state = restored;
       runAccrual();
+      runRecurring();
+      checkAchievements();
       save();
       render();
       toast('Backup restored.', 'good');
@@ -1939,12 +2591,17 @@ async function boot() {
   state = await loadState();
   if (loadProblem) setTimeout(() => toast('Your saved data could not be read. A copy was kept safe; restore a backup in Settings.', 'bad'), 500);
   runAccrual();
+  runRecurring();
+  checkAchievements();
   document.addEventListener('click', onClick);
   document.addEventListener('change', onChange);
   window.addEventListener('hashchange', render);
   document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') hiddenAt = Date.now();
+    if (document.visibilityState === 'visible' && hiddenAt && Date.now() - hiddenAt > 60_000) showLock();
     if (document.visibilityState === 'visible') {
       runAccrual();
+      runRecurring();
       render();
     }
   });
@@ -1955,11 +2612,13 @@ async function boot() {
   });
   enableSwipe();
   render();
+  showLock();
   requestPersistence().then((p) => {
     ui.persisted = p;
     if (route() === 'setup') render();
   });
-  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  // Only the installable version (index.html links the manifest) has a service worker to register.
+  if ('serviceWorker' in navigator && document.querySelector('link[rel="manifest"]') && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     navigator.serviceWorker.register('sw.js').catch((err) => console.warn('Service worker not available', err));
   }
 }

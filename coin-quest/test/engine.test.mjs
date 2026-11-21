@@ -180,7 +180,7 @@ test('normalizeState rejects foreign files, cleans bad values and migrates v1', 
   assert.throws(() => normalizeState({ app: 'coin-quest', version: 99 }));
   const s = normalizeState({
     app: 'coin-quest',
-    version: 4,
+    version: 5,
     debts: [{ id: 'a', startBalance: 1000, apr: -5, dueDay: 40, type: 'spaceship' }, { id: 'bad' }],
     ledger: [{ id: 'l', debtId: 'a', kind: 'payment', amount: -100, date: '2026-01-01' }, { id: 'm', debtId: 'zzz', kind: 'payment', amount: 1, date: '2026-01-01' }],
     categories: [{ id: 'x', name: 'X', limit: 1.5, target: -3 }],
@@ -194,7 +194,7 @@ test('normalizeState rejects foreign files, cleans bad values and migrates v1', 
   assert.equal(s.ledger.length, 1);
   assert.equal(s.categories[0].limit, 0);
   assert.equal(s.categories[0].target, null);
-  assert.deepEqual(s.incomeSources, [{ id: 'i', name: 'Job', amount: 1000, freq: 'monthly' }]);
+  assert.deepEqual(s.incomeSources, [{ id: 'i', name: 'Job', amount: 1000, freq: 'monthly', nextDate: null, day: null, accountId: null, variable: false }]);
   assert.equal(s.expenses.length, 1);
   assert.deepEqual(normalizeState(JSON.parse(JSON.stringify(s))), s);
 
@@ -207,7 +207,7 @@ test('normalizeState rejects foreign files, cleans bad values and migrates v1', 
   });
   assert.deepEqual(v1.categories.map((c) => [c.id, c.limit]), [['food', 0], ['debt-attack', 0]]);
   assert.equal(v1.settings.setupDone, true);
-  assert.equal(v1.version, 4);
+  assert.equal(v1.version, 5);
 });
 
 test('sprites are rectangular grids', () => {
@@ -271,7 +271,7 @@ test('account balances follow every input, ignore events before an account exist
   assert.equal(h.total.at(-1), bal.get('chk') + bal.get('sav') + bal.get('ira'));
   assert.equal(accountActivity(s, 'chk')[0].label, 'Moved money');
   // normalize keeps valid links and drops broken ones
-  const n = normalizeState(JSON.parse(JSON.stringify({ ...s, app: 'coin-quest', version: 4, moves: [...s.moves, { id: 'x', kind: 'transfer', from: 'nope', to: null, amount: 5, date: '2026-11-01' }] })));
+  const n = normalizeState(JSON.parse(JSON.stringify({ ...s, app: 'coin-quest', version: 5, moves: [...s.moves, { id: 'x', kind: 'transfer', from: 'nope', to: null, amount: 5, date: '2026-11-01' }] })));
   assert.equal(n.moves.length, 4);
   assert.equal(n.expenses.find((e) => e.id === 's').toAccountId, 'sav');
   assert.equal(accountBalances(n).get('chk'), bal.get('chk'));
@@ -328,7 +328,176 @@ test('planned debt payments: only the amount above the minimum is extra; monthly
   assert.equal(base.cash[1] - t2.cash[1], 40000);
   assert.equal(base.debts[3] - t2.debts[3], 40000);
   // normalize keeps debt payments with a valid debt only
-  const n = normalizeState(JSON.parse(JSON.stringify({ ...s, app: 'coin-quest', version: 4, scheduled: [...s.scheduled, { id: 'bad', kind: 'debt', amount: 5, date: '2026-12-01', debtId: 'gone' }] })));
+  const n = normalizeState(JSON.parse(JSON.stringify({ ...s, app: 'coin-quest', version: 5, scheduled: [...s.scheduled, { id: 'bad', kind: 'debt', amount: 5, date: '2026-12-01', debtId: 'gone' }] })));
   assert.equal(n.scheduled.length, 2);
   assert.equal(n.scheduled[0].repeat, 'monthly');
+});
+
+test('credit cards: daily interest, and none when the previous balance is paid in full (grace period)', async () => {
+  const { pendingInterest } = await import('../js/debts.js');
+  const card = { id: 'c', type: 'credit', startBalance: 100000, apr: 36.5, dueDay: 15, autoInterest: true, createdAt: '2026-01-15', accruedThrough: '2026-01-15' };
+  // Carrying $1,000 all of Jan 15 -> Feb 15 (31 days) at 36.5%: 0.1% a day = $1/day -> $31
+  const carried = pendingInterest(card, [], '2026-02-15', id);
+  assert.deepEqual(carried.entries.map((e) => e.amount), [3100]);
+  // Paid $1,000 in full on Feb 1: no interest for that cycle
+  const paid = pendingInterest(card, [{ debtId: 'c', kind: 'payment', amount: -100000, date: '2026-02-01' }], '2026-02-15', id);
+  assert.equal(paid.entries.length, 0);
+  // Paid $500 on Jan 31: Jan 16-30 at $1/day (15 days), Jan 31-Feb 15 at $0.50/day (16 days) = $23
+  const half = pendingInterest(card, [{ debtId: 'c', kind: 'payment', amount: -50000, date: '2026-01-31' }], '2026-02-15', id);
+  assert.deepEqual(half.entries.map((e) => e.amount), [2300]);
+});
+
+test('promo rates switch to the after-promo rate on the end date', async () => {
+  const { pendingInterest, aprOn, simDebt } = await import('../js/debts.js');
+  const d = { id: 'p', type: 'personal', startBalance: 120000, apr: 0, aprAfter: 24, promoEnds: '2026-03-01', dueDay: 15, autoInterest: true, createdAt: '2026-01-01', accruedThrough: '2026-01-01' };
+  assert.equal(aprOn(d, '2026-02-28'), 0);
+  assert.equal(aprOn(d, '2026-03-01'), 24);
+  const r = pendingInterest(d, [], '2026-04-15', id);
+  assert.deepEqual(r.entries.map((e) => [e.date, e.amount]), [['2026-03-15', 2400], ['2026-04-15', 2448]]);
+  const sd = simDebt(d, 120000, '2026-01-10');
+  assert.equal(sd.promoMonths, 2);
+  assert.equal(simDebt(d, 120000, '2026-05-01').apr, 24);
+  // Simulation: 0% for months 1, then 24%
+  const { simulatePayoff } = await import('../js/planner.js');
+  const sim = simulatePayoff([{ ...sd, minPayment: 10000 }], 0);
+  assert.equal(sim.timeline[1], 110000); // month 1: no interest
+  assert.equal(sim.timeline[2], 110000 + 2200 - 10000); // month 2: 2% of 110,000
+});
+
+test('student loan pause: interest accrues without compounding, then capitalizes', async () => {
+  const { pendingInterest, balanceOf } = await import('../js/debts.js');
+  const loan = { id: 's', type: 'student', startBalance: 1200000, apr: 12, dueDay: 1, autoInterest: true, createdAt: '2026-01-01', accruedThrough: '2026-01-01', pauseUntil: '2026-03-31', pauseAccrues: true, capitalize: true, minPayment: 20000 };
+  const r = pendingInterest(loan, [], '2026-05-01', id);
+  // Feb, Mar paused: 1% of principal each ($120), as "accrued". Apr: capitalized -> interest on 12,240
+  assert.deepEqual(r.entries.map((e) => [e.date, e.kind, e.amount]), [['2026-02-01', 'accrued', 12000], ['2026-03-01', 'accrued', 12000], ['2026-04-01', 'interest', 12240], ['2026-05-01', 'interest', 12362]]);
+  // Not capitalized: interest stays on principal only
+  const r2 = pendingInterest({ ...loan, capitalize: false }, [], '2026-04-01', id);
+  assert.equal(r2.entries.at(-1).amount, 12000);
+  // Subsidized: nothing accrues while paused
+  assert.deepEqual(pendingInterest({ ...loan, pauseAccrues: false }, [], '2026-04-01', id).entries.map((e) => e.amount), [12000]);
+  assert.equal(balanceOf(loan, r.entries), 1200000 + 12000 + 12000 + 12240 + 12362);
+  // Simulation: no payments while paused, then capitalized
+  const { simulatePayoff, projectDebt } = await import('../js/planner.js');
+  const sim = simulatePayoff([{ id: 's', balance: 1200000, apr: 12, minPayment: 20000, pauseMonths: 2, pauseAccrues: true, capitalize: true }], 0);
+  assert.equal(sim.payments[0], 0);
+  assert.equal(sim.payments[1], 0);
+  assert.equal(sim.timeline[2], 1224000);
+  assert.equal(sim.timeline[3], 1224000 + 12240 - 20000);
+  assert.equal(projectDebt({ id: 's', balance: 1200000, apr: 12, minPayment: 20000, pauseMonths: 2 }).timeline[3], 1224000 + 12240 - 20000);
+});
+
+test('planned extras are paid on top of the budget in their month', async () => {
+  const { simulatePayoff } = await import('../js/planner.js');
+  const d = [{ id: 'a', balance: 100000, apr: 0, minPayment: 10000 }];
+  const base = simulatePayoff(d, 0);
+  const withExtra = simulatePayoff(d, 0, 'avalanche', 600, [{ id: 'a', month: 2, amount: 30000 }]);
+  assert.equal(base.months, 10);
+  assert.equal(withExtra.months, 7);
+  assert.equal(withExtra.payments[1], 40000);
+});
+
+test('missed payments are detected after a due date passes without the minimum', async () => {
+  const { missedPayment } = await import('../js/debts.js');
+  const d = { id: 'm', startBalance: 100000, minPayment: 5000, dueDay: 10, createdAt: '2026-01-01' };
+  assert.deepEqual(missedPayment(d, [], '2026-03-12'), { due: '2026-03-10', paid: 0 });
+  assert.equal(missedPayment(d, [{ debtId: 'm', kind: 'payment', amount: -5000, date: '2026-03-01' }], '2026-03-12'), null);
+  assert.equal(missedPayment({ ...d, createdAt: '2026-03-01' }, [], '2026-03-12'), null); // too new to judge
+  assert.equal(missedPayment({ ...d, pauseUntil: '2026-06-01' }, [], '2026-03-12'), null);
+});
+
+test('recurring paydays and bills post on their dates and roll forward', async () => {
+  const { nextOccurrence, dueRecurring } = await import('../js/recurring.js');
+  assert.equal(nextOccurrence('2026-11-21', 'weekly'), '2026-11-28');
+  assert.equal(nextOccurrence('2026-11-21', 'biweekly'), '2026-12-05');
+  assert.equal(nextOccurrence('2026-01-31', 'monthly', 31), '2026-02-28');
+  assert.equal(nextOccurrence('2026-02-28', 'monthly', 31), '2026-03-31');
+  assert.equal(nextOccurrence('2026-11-01', 'semimonthly', 1), '2026-11-16');
+  assert.equal(nextOccurrence('2026-11-16', 'semimonthly', 1), '2026-12-01');
+  assert.equal(nextOccurrence('2026-02-14', 'semimonthly', 14), '2026-02-28');
+  assert.equal(nextOccurrence('2026-03-10', 'yearly'), '2027-03-10');
+  const s = emptyState();
+  s.accounts.push({ id: 'chk', name: 'Checking', type: 'cash', start: 0, createdAt: '2026-11-01' });
+  s.incomeSources.push({ id: 'job', name: 'Job', amount: 100000, freq: 'biweekly', nextDate: '2026-11-06', day: 6, accountId: 'chk', variable: false });
+  s.incomeSources.push({ id: 'gig', name: 'Gig', amount: 50000, freq: 'weekly', nextDate: '2026-11-02', day: 2, accountId: 'chk', variable: true });
+  s.bills.push({ id: 'rent', name: 'Rent', amount: 150000, freq: 'monthly', nextDate: '2026-12-01', day: 1, accountId: 'chk' });
+  const r = dueRecurring(s, '2026-11-21', id);
+  assert.deepEqual(r.moves.map((m) => [m.kind, m.date, m.amount]), [['payday', '2026-11-06', 100000], ['payday', '2026-11-20', 100000]]);
+  assert.deepEqual(r.nextDates, [{ list: 'incomeSources', id: 'job', nextDate: '2026-12-04' }]);
+});
+
+test('budget lines: one-month amounts, rollover, card purchases not double counted, goal deadlines, variable income', async () => {
+  const { monthSummary, goalStatus, sourceMonthly, carryInto } = await import('../js/budget.js');
+  const s = emptyState();
+  s.settings.startMonth = '2026-09';
+  s.incomeSources.push({ id: 'i', name: 'Job', amount: 400000, freq: 'monthly' });
+  s.categories.push({ id: 'g', name: 'Groceries', kind: 'need', limit: 40000, overrides: { '2026-11': 60000 }, rollover: true, target: null, targetDate: null });
+  s.expenses.push({ id: 'a', amount: 30000, date: '2026-09-05', categoryId: 'g' }); // $100 left in Sep
+  s.expenses.push({ id: 'b', amount: 45000, date: '2026-10-05', categoryId: 'g' }); // $50 over in Oct
+  assert.equal(carryInto(s, s.categories[0], '2026-11'), 10000 - 5000);
+  const nov = monthSummary(s, '2026-11', 0).categories[0];
+  assert.equal(nov.limit, 60000);
+  assert.equal(nov.available, 65000);
+  // Card purchase $200 + $500 card payment: spending counts $200 + $300, not $700
+  s.debts.push({ id: 'card', name: 'Card', startBalance: 100000 });
+  s.expenses.push({ id: 'c', amount: 20000, date: '2026-11-03', categoryId: 'g', debtId: 'card' });
+  s.ledger.push({ id: 'p', debtId: 'card', kind: 'payment', amount: -50000, date: '2026-11-10' });
+  assert.equal(monthSummary(s, '2026-11', 0).spent, 20000 + 30000);
+  // Savings goal: $1,200 by May with $300 saved -> $900 over 7 months (Nov..May) = $128.58 -> rounded up to $129
+  s.categories.push({ id: 'trip', name: 'Trip', kind: 'savings', limit: 10000, target: 120000, targetDate: '2027-05-01' });
+  s.expenses.push({ id: 't', amount: 30000, date: '2026-10-01', categoryId: 'trip' });
+  const gs = goalStatus(s, s.categories[1], '2026-11-21');
+  assert.equal(gs.monthsLeft, 7);
+  assert.equal(gs.needPerMonth, 12900);
+  assert.equal(gs.onTrack, false);
+  // Variable income: average of recorded paydays in the last 3 months, else the estimate
+  const gig = { id: 'gig', name: 'Gig', amount: 50000, freq: 'monthly', variable: true };
+  assert.equal(sourceMonthly(s, gig, '2026-11'), 50000);
+  s.moves.push({ id: 'm1', kind: 'payday', to: 'x', amount: 30000, date: '2026-09-10', sourceId: 'gig' });
+  s.moves.push({ id: 'm2', kind: 'payday', to: 'x', amount: 70000, date: '2026-10-10', sourceId: 'gig' });
+  s.moves.push({ id: 'm3', kind: 'payday', to: 'x', amount: 20000, date: '2026-10-20', sourceId: 'gig' });
+  assert.equal(sourceMonthly(s, gig, '2026-11'), 60000); // (300 + 900) / 2 months
+});
+
+test('v5 fields survive a save round trip and bad values are cleaned', () => {
+  const s = emptyState();
+  s.accounts.push({ id: 'chk', name: 'Checking', type: 'cash', start: 0, createdAt: '2026-11-01' });
+  s.debts.push({ id: 'd', name: 'Card', type: 'credit', startBalance: 1000, apr: 0, aprAfter: 29.99, promoEnds: '2027-03-01', minPayment: 100, dueDay: 5, include: true, autoInterest: true, createdAt: '2026-11-01', accruedThrough: '2026-11-01', killRewarded: false, pauseUntil: null, pauseAccrues: true, capitalize: true, bossPhases: [75] });
+  s.categories.push({ id: 'g', name: 'Groceries', kind: 'need', limit: 100, target: null, targetDate: null, rollover: true, overrides: { '2026-12': 200 } });
+  s.incomeSources.push({ id: 'i', name: 'Job', amount: 1000, freq: 'biweekly', nextDate: '2026-11-27', day: 27, accountId: 'chk', variable: false });
+  s.expenses.push({ id: 'e', amount: 50, date: '2026-11-02', categoryId: 'g', note: '', accountId: null, toAccountId: null, debtId: 'd' });
+  s.ledger.push({ id: 'l', debtId: 'd', kind: 'charge', amount: 50, date: '2026-11-02', note: '', auto: false, accountId: null, expenseId: 'e' });
+  s.player.achievements = { 'first-hit': '2026-11-02' };
+  const n = normalizeState(JSON.parse(JSON.stringify(s)));
+  assert.deepEqual(n, s);
+  const bad = normalizeState({ ...JSON.parse(JSON.stringify(s)), debts: [{ ...s.debts[0], aprAfter: -1, promoEnds: 'soon', bossPhases: [10] }], categories: [{ ...s.categories[0], overrides: { nope: 5, '2026-12': -1 } }] });
+  assert.equal(bad.debts[0].aprAfter, null);
+  assert.equal(bad.debts[0].promoEnds, null);
+  assert.deepEqual(bad.debts[0].bossPhases, []);
+  assert.deepEqual(bad.categories[0].overrides, {});
+});
+
+test('game: achievements, weekly quests, boss phases, skins', async () => {
+  const g = await import('../js/game.js');
+  const s = emptyState();
+  assert.deepEqual(g.newAchievements(s, '2026-11-21').map((a) => a.id), []);
+  s.debts.push({ id: 'd', name: 'Card', startBalance: 150000, minPayment: 5000 });
+  s.ledger.push({ id: 'p', debtId: 'd', kind: 'payment', amount: -150000, date: '2026-11-20' });
+  const ids = g.newAchievements(s, '2026-11-21').map((a) => a.id);
+  assert.deepEqual(ids, ['first-debt', 'first-hit', 'dmg-1k', 'first-kill']);
+  s.player.achievements['first-debt'] = '2026-11-21';
+  assert.ok(!g.newAchievements(s, '2026-11-21').some((a) => a.id === 'first-debt'));
+  // Weeks start on Monday; quests are stable within a week
+  assert.equal(g.weekStart('2026-11-21'), '2026-11-16'); // a Saturday
+  assert.equal(g.weekStart('2026-11-16'), '2026-11-16');
+  assert.deepEqual(g.weeklyQuests('2026-11-16'), g.weeklyQuests('2026-11-16'));
+  assert.equal(new Set(g.weeklyQuests('2026-11-16')).size, 3);
+  const qs = g.questStatus(s, '2026-11-21');
+  assert.equal(qs.length, 3);
+  // Boss phases
+  assert.deepEqual(g.bossPhasesCrossed(100000, 80000, 40000), [75, 50]);
+  assert.deepEqual(g.bossPhasesCrossed(100000, 80000, 40000, [75]), [50]);
+  assert.deepEqual(g.bossPhasesCrossed(100000, 20000, 10000), []);
+  // Skins by level
+  assert.deepEqual(g.unlockedSkins(0), ['adventurer']);
+  assert.ok(g.unlockedSkins(100000).includes('champion'));
 });

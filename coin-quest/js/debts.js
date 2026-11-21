@@ -5,7 +5,7 @@
 // Entry amounts are signed cents: payments are negative (damage), interest/charges/fees are positive (regen).
 // A "correction" entry (from a Scout report) is whatever delta makes the balance match the real statement.
 
-import { addMonths, dueDateIn, ymOf } from './dates.js';
+import { addDays, addMonths, dueDateIn, ymOf } from './dates.js';
 
 export const DEBT_TYPES = [
   { key: 'credit', label: 'Credit card' },
@@ -20,6 +20,7 @@ export const DEBT_TYPES = [
 export const ENTRY_KINDS = {
   payment: { label: 'Attack', sign: -1 },
   interest: { label: 'Interest regen', sign: 1 },
+  accrued: { label: 'Interest (paused loan)', sign: 1 },
   charge: { label: 'New charge', sign: 1 },
   fee: { label: 'Fee', sign: 1 },
   correction: { label: 'Scout report', sign: 0 },
@@ -89,10 +90,50 @@ export function isRegenerating(debt, balanceCents) {
  * Returns { entries, accruedThrough } without mutating anything.
  * Interest each month is based on the balance as of that due date, including that month's earlier entries.
  */
+/** The interest rate on a date: the current (promo) rate until promoEnds, then aprAfter. */
+export function aprOn(debt, date) {
+  return debt.promoEnds && date >= debt.promoEnds ? debt.aprAfter ?? debt.apr : debt.apr;
+}
+
+/** In deferment/forbearance: no payment is required through pauseUntil. */
+export const isPaused = (debt, date) => !!debt.pauseUntil && date <= debt.pauseUntil;
+
+const monthsBetween = (fromYm, toYm) => {
+  const [a, b] = fromYm.split('-').map(Number);
+  const [c, d] = toYm.split('-').map(Number);
+  return c * 12 + d - (a * 12 + b);
+};
+
+/** A debt in the shape the payoff simulations take, with its promo and pause converted to month counts from today. */
+export function simDebt(debt, balance, today) {
+  const now = ymOf(today);
+  return {
+    id: debt.id,
+    balance,
+    apr: debt.promoEnds && today >= debt.promoEnds ? debt.aprAfter ?? debt.apr : debt.apr,
+    aprAfter: debt.aprAfter ?? null,
+    promoMonths: debt.promoEnds && today < debt.promoEnds ? monthsBetween(now, ymOf(debt.promoEnds)) : null,
+    minPayment: debt.minPayment,
+    pauseMonths: debt.pauseUntil && today <= debt.pauseUntil ? monthsBetween(now, ymOf(debt.pauseUntil)) : 0,
+    pauseAccrues: debt.pauseAccrues !== false,
+    capitalize: debt.capitalize !== false,
+  };
+}
+
+/**
+ * Compute interest entries owed since `debt.accruedThrough` up to `today` (inclusive), one per due date.
+ * Returns { entries, accruedThrough } without mutating anything.
+ *  - Credit cards: daily interest on each day's balance through the cycle (previous due date to this one),
+ *    and none at all if the balance at the start of the cycle was paid off in full during it (grace period).
+ *  - Other debts: a month of interest on the balance as of the due date.
+ *  - Paused loans (deferment/forbearance): interest builds up as "accrued" (or not at all if it doesn't accrue)
+ *    and earns no interest itself; when the pause ends it is capitalized (added to principal) unless turned off.
+ */
 export function pendingInterest(debt, ledger, today, makeId) {
   const entries = [];
   let through = debt.accruedThrough;
-  if (!debt.autoInterest || debt.apr <= 0 || !through) return { entries, accruedThrough: through };
+  const hasRate = debt.apr > 0 || (debt.aprAfter ?? 0) > 0;
+  if (!debt.autoInterest || !hasRate || !through) return { entries, accruedThrough: through };
 
   const own = ledger.filter((e) => e.debtId === debt.id);
   let ym = ymOf(through);
@@ -103,14 +144,44 @@ export function pendingInterest(debt, ledger, today, makeId) {
   }
   // Safety cap: never generate more than 10 years of entries in one go.
   for (let i = 0; due <= today && i < 120; i++) {
-    const bal = balanceOf(debt, own.concat(entries), due);
-    const amount = monthlyInterest(bal, debt.apr);
+    const all = own.concat(entries);
+    const paused = isPaused(debt, due);
+    let amount = 0;
+    if (paused && debt.pauseAccrues === false) {
+      amount = 0;
+    } else if (debt.type === 'credit' && !paused) {
+      const prevDue = dueDateIn(addMonths(ym, -1), debt.dueDay);
+      const start = prevDue > debt.createdAt ? prevDue : debt.createdAt;
+      const statement = balanceOf(debt, all, start);
+      const paidInCycle = -all.filter((e) => e.kind === 'payment' && e.date > start && e.date <= due).reduce((t, e) => t + e.amount, 0);
+      if (statement > 0 && paidInCycle < statement) {
+        let sum = 0;
+        for (let d = addDays(start, 1); d <= due; d = addDays(d, 1)) sum += (Math.max(0, balanceOf(debt, all, d)) * aprOn(debt, d)) / 36500;
+        amount = Math.round(sum);
+      }
+    } else {
+      const accrued = all.filter((e) => e.kind === 'accrued' && e.date <= due).reduce((t, e) => t + e.amount, 0);
+      const excluded = paused || debt.capitalize === false ? accrued : 0;
+      amount = monthlyInterest(balanceOf(debt, all, due) - excluded, aprOn(debt, due));
+    }
     if (amount > 0) {
-      entries.push({ id: makeId(), debtId: debt.id, kind: 'interest', amount, date: due, note: '', auto: true });
+      entries.push({ id: makeId(), debtId: debt.id, kind: paused ? 'accrued' : 'interest', amount, date: due, note: '', auto: true });
     }
     through = due;
     ym = addMonths(ym, 1);
     due = dueDateIn(ym, debt.dueDay);
   }
   return { entries, accruedThrough: through };
+}
+
+/** The most recent due date passed without at least the minimum being paid since the one before it. */
+export function missedPayment(debt, ledger, today) {
+  if (!debt.minPayment || isPaused(debt, today)) return null;
+  let last = dueDateIn(ymOf(today), debt.dueDay);
+  if (last >= today) last = dueDateIn(addMonths(ymOf(today), -1), debt.dueDay);
+  const prev = dueDateIn(addMonths(ymOf(last), -1), debt.dueDay);
+  if (prev < debt.createdAt) return null; // added too recently to know
+  if (balanceOf(debt, ledger, prev) <= 0) return null;
+  const paid = ledger.filter((e) => e.debtId === debt.id && e.kind === 'payment' && e.date > prev && e.date <= last).reduce((t, e) => t - e.amount, 0);
+  return paid < Math.min(debt.minPayment, balanceOf(debt, ledger, prev)) ? { due: last, paid } : null;
 }

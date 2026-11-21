@@ -19,18 +19,44 @@ export const STRATEGIES = {
   },
 };
 
+/** The rate in simulated month k (1-based): the promo rate until the promo ends, then the after-promo rate. */
+const rateIn = (d, k) => (d.promoMonths != null && k >= d.promoMonths ? d.aprAfter ?? d.apr : d.apr);
+
 /**
- * @param {{id:string, balance:number, apr:number, minPayment:number}[]} debts  balances/minimums in cents
+ * One month of interest for a simulated debt, honoring a pause (deferment/forbearance).
+ * d.acc tracks interest accrued during a pause that hasn't been capitalized; it earns no interest itself.
+ */
+function accrue(d, k) {
+  const paused = k <= (d.pauseMonths || 0);
+  if (!paused && d.acc && d.capitalize !== false) d.acc = 0; // capitalized when the pause ends
+  if (paused && d.pauseAccrues === false) return 0;
+  const i = monthlyInterest(d.bal - (d.acc || 0), rateIn(d, k));
+  d.bal += i;
+  if (paused) d.acc = (d.acc || 0) + i;
+  return i;
+}
+
+/** Apply a payment, paying down uncapitalized accrued interest first. */
+function pay(d, amount) {
+  const p = Math.min(amount, d.bal);
+  d.bal -= p;
+  if (d.acc) d.acc = Math.max(0, d.acc - p);
+  return p;
+}
+
+/**
+ * @param {{id:string, balance:number, apr:number, minPayment:number, promoMonths?, aprAfter?, pauseMonths?, pauseAccrues?, capitalize?}[]} debts
  * @param {number} extraCents  extra paid per month on top of minimums
  * @param {'avalanche'|'snowball'} strategy
- * @returns {{feasible:boolean, months:number, totalInterest:number, totalPaid:number,
- *            kills:{id:string, month:number}[], timeline:number[]}}
+ * @param {number} maxMonths
+ * @param {{id:string, month:number, amount:number}[]} extras  planned one-off amounts paid to a debt in a given month,
+ *        on top of the monthly budget
  */
-export function simulatePayoff(debts, extraCents, strategy = 'avalanche', maxMonths = 600) {
+export function simulatePayoff(debts, extraCents, strategy = 'avalanche', maxMonths = 600, extras = []) {
   const order = (STRATEGIES[strategy] || STRATEGIES.avalanche).order;
   const live = debts
     .filter((d) => d.balance > 0)
-    .map((d) => ({ id: d.id, apr: d.apr, min: Math.max(0, d.minPayment), bal: d.balance }));
+    .map((d) => ({ ...d, min: Math.max(0, d.minPayment), bal: d.balance, acc: 0 }));
   const budget = live.reduce((s, d) => s + d.min, 0) + Math.max(0, extraCents);
   const kills = [];
   const timeline = [live.reduce((s, d) => s + d.bal, 0)];
@@ -42,25 +68,25 @@ export function simulatePayoff(debts, extraCents, strategy = 'avalanche', maxMon
   while (month < maxMonths && live.some((d) => d.bal > 0)) {
     month++;
     const active = live.filter((d) => d.bal > 0);
-    for (const d of active) {
-      const i = monthlyInterest(d.bal, d.apr);
-      d.bal += i;
-      totalInterest += i;
+    for (const d of active) totalInterest += accrue(d, month);
+    const paused = (d) => month <= (d.pauseMonths || 0);
+    // A paused loan's minimum isn't due, so that money isn't spent this month.
+    let pool = budget - active.filter(paused).reduce((t, d) => t + d.min, 0);
+    for (const d of active) if (!paused(d)) pool -= pay(d, Math.min(d.min, pool));
+    let planned = 0;
+    for (const x of extras) {
+      const d = active.find((y) => y.id === x.id);
+      if (d && x.month === month) planned += pay(d, x.amount);
     }
-    let pool = budget;
-    for (const d of active) {
-      const pay = Math.min(d.min, d.bal, pool);
-      d.bal -= pay;
-      pool -= pay;
-    }
-    for (const d of active.slice().sort(order)) {
+    // Extra goes to debts that aren't paused first, and to a paused one only if nothing else is left.
+    const targets = active.filter((d) => !paused(d)).sort(order).concat(active.filter(paused).sort(order));
+    for (const d of targets) {
       if (pool <= 0) break;
-      const pay = Math.min(pool, d.bal);
-      d.bal -= pay;
-      pool -= pay;
+      pool -= pay(d, pool);
     }
-    totalPaid += budget - pool;
-    payments.push(budget - pool);
+    const spent = budget - active.filter(paused).reduce((t, d) => t + d.min, 0) - pool;
+    totalPaid += spent + planned;
+    payments.push(spent + planned);
     for (const d of active) if (d.bal <= 0) kills.push({ id: d.id, month });
     timeline.push(live.reduce((s, d) => s + d.bal, 0));
   }
@@ -86,32 +112,29 @@ export function projectDebt(debt, s = {}, maxMonths = 600) {
   const every = Math.max(0, s.extra?.every ?? 0);
   const missCount = Math.max(0, s.missed?.count || 0);
   const fee = Math.max(0, s.missed?.fee || 0);
-  let bal = debt.balance;
+  const d = { ...debt, bal: debt.balance, acc: 0 };
   let totalInterest = 0;
   let totalFees = 0;
   let totalPaid = 0;
   let month = 0;
-  const timeline = [bal];
+  const timeline = [d.bal];
   const payments = [];
-  while (bal > 0 && month < maxMonths) {
+  while (d.bal > 0 && month < maxMonths) {
     month++;
-    const i = monthlyInterest(bal, debt.apr);
-    bal += i;
-    totalInterest += i;
-    let pay;
+    totalInterest += accrue(d, month);
+    let amount;
     if (month <= missCount) {
-      pay = 0;
-      bal += fee;
+      amount = 0;
+      d.bal += fee;
       totalFees += fee;
     } else {
-      pay = monthly;
+      amount = month <= (d.pauseMonths || 0) ? 0 : monthly;
     }
-    if (extraAmt && (every === 0 ? month === 1 : (month - 1) % every === 0)) pay += extraAmt;
-    pay = Math.min(pay, bal);
-    bal -= pay;
-    totalPaid += pay;
-    payments.push(pay);
-    timeline.push(bal);
+    if (extraAmt && (every === 0 ? month === 1 : (month - 1) % every === 0)) amount += extraAmt;
+    const paid = pay(d, amount);
+    totalPaid += paid;
+    payments.push(paid);
+    timeline.push(d.bal);
   }
-  return { feasible: bal <= 0, months: month, totalInterest, totalFees, totalPaid, timeline, payments };
+  return { feasible: d.bal <= 0, months: month, totalInterest, totalFees, totalPaid, timeline, payments };
 }

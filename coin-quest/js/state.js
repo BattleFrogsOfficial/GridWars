@@ -7,7 +7,7 @@ import { DEBT_TYPES, ENTRY_KINDS } from './debts.js';
 import { ACCOUNT_TYPES, MOVE_KINDS } from './accounts.js';
 import { isValidISO, todayISO } from './dates.js';
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 export const APP_ID = 'coin-quest';
 
 export function uid() {
@@ -23,9 +23,10 @@ export function emptyState() {
     settings: {
       currency: 'USD', strategy: 'avalanche', extraCents: null, lastBackup: null, setupDone: false, startMonth: null,
       chart: { view: 'checking', projections: true, income: true, spending: true, debts: true },
+      lock: { enabled: false, pinHash: null, salt: null, credId: null },
     },
     goals: { payDebt: false, emergency: false, saveFor: false, fun: false, spendLess: false },
-    player: { xp: 0, days: [] },
+    player: { xp: 0, days: [], achievements: {}, quests: {}, skin: 'adventurer', title: null },
     incomeSources: [], // recurring income: { id, name, amount, freq }
     bills: [], // recurring fixed costs that never get paid off: { id, name, amount, freq }
     debts: [],
@@ -58,6 +59,14 @@ function normDebt(d) {
     createdAt: isValidISO(d.createdAt) ? d.createdAt : todayISO(),
     accruedThrough: isValidISO(d.accruedThrough) ? d.accruedThrough : isValidISO(d.createdAt) ? d.createdAt : todayISO(),
     killRewarded: d.killRewarded === true,
+    // Promo rate: `apr` applies until promoEnds, then aprAfter.
+    promoEnds: isValidISO(d.promoEnds) ? d.promoEnds : null,
+    aprAfter: Number.isFinite(d.aprAfter) && d.aprAfter >= 0 ? d.aprAfter : null,
+    // Deferment/forbearance: no payment due through pauseUntil.
+    pauseUntil: isValidISO(d.pauseUntil) ? d.pauseUntil : null,
+    pauseAccrues: d.pauseAccrues !== false,
+    capitalize: d.capitalize !== false,
+    bossPhases: arr(d.bossPhases).filter((x) => [75, 50, 25].includes(x)),
   };
 }
 
@@ -77,13 +86,16 @@ function normMove(m, acctIds) {
   const from = acctIds.has(m.from) ? m.from : null;
   const to = acctIds.has(m.to) ? m.to : null;
   if (m.kind === 'update' ? !to : !(from || to) || m.amount <= 0) return null;
-  return { id: m.id, kind: m.kind, from: m.kind === 'update' ? null : from, to, amount: m.amount, date: m.date, note: str(m.note, 80) };
+  return {
+    id: m.id, kind: m.kind, from: m.kind === 'update' ? null : from, to, amount: m.amount, date: m.date, note: str(m.note, 80),
+    sourceId: typeof m.sourceId === 'string' ? m.sourceId : null, auto: m.auto === true,
+  };
 }
 
 function normEntry(e, debtIds) {
   if (!e || typeof e.id !== 'string' || !debtIds.has(e.debtId) || !isInt(e.amount) || !isValidISO(e.date)) return null;
   if (!(e.kind in ENTRY_KINDS)) return null;
-  return { id: e.id, debtId: e.debtId, kind: e.kind, amount: e.amount, date: e.date, note: str(e.note, 140), auto: e.auto === true, accountId: typeof e.accountId === 'string' ? e.accountId : null };
+  return { id: e.id, debtId: e.debtId, kind: e.kind, amount: e.amount, date: e.date, note: str(e.note, 140), auto: e.auto === true, accountId: typeof e.accountId === 'string' ? e.accountId : null, expenseId: typeof e.expenseId === 'string' ? e.expenseId : null };
 }
 
 function normCategory(c) {
@@ -94,12 +106,26 @@ function normCategory(c) {
     kind: c.kind in CATEGORY_KINDS ? c.kind : 'need',
     limit: isInt(c.limit) && c.limit >= 0 ? c.limit : 0,
     target: isInt(c.target) && c.target > 0 ? c.target : null,
+    targetDate: isValidISO(c.targetDate) ? c.targetDate : null,
+    rollover: c.rollover === true,
+    overrides: Object.fromEntries(
+      Object.entries(c.overrides && typeof c.overrides === 'object' ? c.overrides : {})
+        .filter(([k, v]) => /^\d{4}-\d{2}$/.test(k) && isInt(v) && v >= 0)
+        .slice(-36),
+    ),
   };
 }
 
-function normRecurring(r) {
+function normRecurring(r, acct) {
   if (!r || typeof r.id !== 'string' || !isInt(r.amount) || r.amount <= 0) return null;
-  return { id: r.id, name: str(r.name, 40) || 'Untitled', amount: r.amount, freq: r.freq in FREQUENCIES ? r.freq : 'monthly' };
+  return {
+    id: r.id, name: str(r.name, 40) || 'Untitled', amount: r.amount, freq: r.freq in FREQUENCIES ? r.freq : 'monthly',
+    // Posts automatically on nextDate into/out of accountId when both are set.
+    nextDate: isValidISO(r.nextDate) ? r.nextDate : null,
+    day: isInt(r.day) && r.day >= 1 && r.day <= 31 ? r.day : null,
+    accountId: acct(r.accountId),
+    variable: r.variable === true, // irregular income: amount is an estimate
+  };
 }
 
 function normMoneyEntry(e, extra) {
@@ -142,20 +168,31 @@ export function normalizeState(raw) {
         debts: s.chart?.debts !== false,
       },
       startMonth: typeof s.startMonth === 'string' && /^\d{4}-\d{2}$/.test(s.startMonth) ? s.startMonth : null,
+      lock: {
+        enabled: s.lock?.enabled === true && typeof s.lock?.pinHash === 'string',
+        pinHash: typeof s.lock?.pinHash === 'string' ? s.lock.pinHash : null,
+        salt: typeof s.lock?.salt === 'string' ? s.lock.salt : null,
+        credId: typeof s.lock?.credId === 'string' ? s.lock.credId : null,
+      },
     },
     goals: Object.fromEntries(Object.keys(base.goals).map((k) => [k, g[k] === true])),
     player: {
       xp: isInt(migrated.player?.xp) && migrated.player.xp >= 0 ? migrated.player.xp : 0,
       days: arr(migrated.player?.days).filter(isValidISO).slice(-400),
+      achievements: Object.fromEntries(Object.entries(migrated.player?.achievements || {}).filter(([, v]) => isValidISO(v))),
+      quests: Object.fromEntries(Object.entries(migrated.player?.quests || {}).filter(([k, v]) => isValidISO(k) && Array.isArray(v)).map(([k, v]) => [k, v.filter((x) => typeof x === 'string')]).slice(-12)),
+      skin: typeof migrated.player?.skin === 'string' ? migrated.player.skin : 'adventurer',
+      title: typeof migrated.player?.title === 'string' ? migrated.player.title : null,
     },
-    incomeSources: arr(migrated.incomeSources).map(normRecurring).filter(Boolean),
-    bills: arr(migrated.bills).map(normRecurring).filter(Boolean),
+    incomeSources: arr(migrated.incomeSources).map((r) => normRecurring(r, acct)).filter(Boolean),
+    bills: arr(migrated.bills).map((r) => normRecurring(r, acct)).filter(Boolean).map((b) => ({ ...b, variable: false })),
     debts,
-    ledger: arr(migrated.ledger).map((e) => normEntry(e, debtIds)).filter(Boolean).map((e) => ({ ...e, accountId: acct(e.accountId) })),
+    ledger: arr(migrated.ledger).map((e) => normEntry(e, debtIds)).filter(Boolean)
+      .map((e) => ({ ...e, accountId: acct(e.accountId), expenseId: typeof e.expenseId === 'string' ? e.expenseId : null })),
     categories,
     incomes: arr(migrated.incomes).map((e) => normMoneyEntry(e, (x) => ({ source: str(x.source, 40), accountId: acct(x.accountId) }))).filter(Boolean),
     expenses: arr(migrated.expenses)
-      .map((e) => normMoneyEntry(e, (x) => ({ categoryId: x.categoryId, accountId: acct(x.accountId), toAccountId: acct(x.toAccountId) })))
+      .map((e) => normMoneyEntry(e, (x) => ({ categoryId: x.categoryId, accountId: acct(x.accountId), toAccountId: acct(x.toAccountId), debtId: debtIds.has(x.debtId) ? x.debtId : null })))
       .filter((e) => e && catIds.has(e.categoryId)),
     accounts,
     moves: arr(migrated.moves).map((m) => normMove(m, acctIds)).filter(Boolean),
@@ -195,6 +232,10 @@ function migrate(raw) {
   if (s.version === 3) {
     // v4 adds scheduled one-off payments and chart preferences. Nothing to convert.
     s.version = 4;
+  }
+  if (s.version === 4) {
+    // v5 adds promo rates, loan pauses, card purchases, recurring dates, budget options, game progress and a lock.
+    s.version = 5;
   }
   return s;
 }
