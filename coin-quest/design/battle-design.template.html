@@ -76,17 +76,20 @@ figcaption b { color: var(--ink); display: block; }
 .gallery canvas { width: 96px; height: 96px; image-rendering: pixelated; }
 .gallery canvas.frame { width: 84px; height: 84px; }
 .loading { color: var(--muted); font-size: 14px; }
+.summon { position: absolute; inset: 0; display: grid; place-items: center; background: #05070f; color: var(--muted); font-weight: 800; }
+.dmgrow canvas { width: 72px; height: 100px; }
 @media (prefers-reduced-motion: reduce) { .dmg { animation: none; } }
 </style>
 
 <main>
   <h1>Battle screen</h1>
-  <p class="lede">A design for Coin Quest's center tab. You stand in a pixel world facing one debt at a time; swipe left or right to face the next. Monsters are rendered from small 3D models, so they turn as they leave and enter.</p>
+  <p class="lede">A design for Coin Quest's center tab. You stand in a pixel world facing one debt at a time; swipe left or right to face the next. Monsters are rendered from small 3D models at their true sizes, and they take more visible damage the more of the debt you pay off.</p>
 
   <div class="top">
     <div class="phone">
       <div class="screen" id="screen">
         <canvas class="stage" id="stage" width="120" height="168" aria-label="Battle view"></canvas>
+        <div class="summon" id="summon">Summoning monsters…</div>
         <div class="hud" id="hud"></div>
         <button class="arrow l" id="prev" aria-label="Previous monster">‹</button>
         <button class="arrow r" id="next" aria-label="Next monster">›</button>
@@ -101,13 +104,15 @@ figcaption b { color: var(--ink); display: block; }
     <div>
       <dl class="spec">
         <dt>Center stage</dt>
-        <dd>The monster stands on the path a few steps ahead, in a backdrop that matches its type: Mossy Hollow, Goblin Woods, Stone Bridge, Ember Canyon, the Dragon's Lair or the Castle Gate. Your shield and sword frame the bottom of the view.</dd>
+        <dd>The monster stands on the path ahead, in a backdrop that matches its type: Mossy Hollow, Goblin Woods, Stone Bridge, Ember Canyon, the Dragon's Lair or the Castle Gate. Every monster is drawn with the same camera, so they keep their real sizes: a slime is a small blob at your feet, a troll towers, and the elder dragon hovers in the air above you.</dd>
+        <dt>Type never changes</dt>
+        <dd>A debt's monster is set by the highest balance it has ever had. Paying it down doesn't shrink it into a weaker monster; it wears it down instead: slashes and wounds, chunks knocked out, torn wings, duller colours and a hurt lean, in five stages until it's defeated.</dd>
         <dt>Swiping</dt>
-        <dd>Drag the scene, use the arrows or press ← →. The current monster slides and turns away from you; the scenery pans as if you turned your head; the next monster turns to face you as it arrives. Let go before a quarter of the width and it settles back.</dd>
+        <dd>Drag the scene, use the arrows or press ← →. The monster slides away and turns side-on as it goes, the scenery pans as if you turned your head, and the next one turns toward you as it arrives. Let go before a quarter of the width and it settles back.</dd>
         <dt>Attacking</dt>
-        <dd>Attack (pay) opens the payment form in the app. Here it plays the sword thrust, a white hit flash and the damage number, and the HP bar drops. Boss marks at 75/50/25% sit on the bar.</dd>
+        <dd>Attack (pay) opens the payment form in the app. Here each attack takes 12% off: a white hit flash, a shake and the damage number, and every fifth of the debt paid shows new wounds. Boss marks at 75/50/25% sit on the HP bar.</dd>
         <dt>What the art says</dt>
-        <dd>Monster type comes from the balance (Slime under $500 up to Elder Dragon over $40k; a mortgage is a Castle). Colour comes from the interest rate: <span class="legend-chip" style="background:#3f9a52"></span>calm under 5%, <span class="legend-chip" style="background:#c0681c"></span>angry 5–15%, <span class="legend-chip" style="background:#a8262e"></span>furious 15%+. Frames read as rank: wood, iron, bronze, silver, gold, obsidian.</dd>
+        <dd>Type from the peak balance (Slime under $500 up to Elder Dragon over $40k; a mortgage is a Castle). Colour from the interest rate: <span class="legend-chip" style="background:#3f9a52"></span>calm under 5%, <span class="legend-chip" style="background:#c0681c"></span>angry 5–15%, <span class="legend-chip" style="background:#a8262e"></span>furious 15%+. Frames read as rank: wood, iron, bronze, silver, gold, obsidian.</dd>
       </dl>
     </div>
   </div>
@@ -115,17 +120,18 @@ figcaption b { color: var(--ink); display: block; }
   <h2>Swipe states</h2>
   <div class="board">
     <figure><canvas id="sb0" width="120" height="168"></canvas><figcaption><b>At rest</b>Facing the current monster.</figcaption></figure>
-    <figure><canvas id="sb1" width="120" height="168"></canvas><figcaption><b>Swiping left</b>It turns and slides off to the left; the next one enters from the right, turned toward the way it came.</figcaption></figure>
+    <figure><canvas id="sb1" width="120" height="168"></canvas><figcaption><b>Swiping left</b>It turns side-on and slides off to the left; the next one arrives from the right.</figcaption></figure>
     <figure><canvas id="sb2" width="120" height="168"></canvas><figcaption><b>Swiping right</b>The same in reverse, back to the previous monster.</figcaption></figure>
   </div>
 
-  <h2>Monster models</h2>
-  <div class="gallery"><table id="models"><thead><tr><th>Type</th><th>Calm</th><th>Angry</th><th>Furious</th><th>Turning</th><th>Side</th></tr></thead><tbody></tbody></table></div>
-  <p class="loading" id="loading1">Rendering models…</p>
+  <h2>Wearing them down</h2>
+  <p>Each monster at 0%, 25%, 50%, 75% and almost 100% paid off.</p>
+  <div class="gallery"><table id="damage"><thead><tr><th>Type</th><th>Fresh</th><th>¼ paid</th><th>½ paid</th><th>¾ paid</th><th>Nearly gone</th></tr></thead><tbody></tbody></table></div>
 
   <h2>Framed portraits</h2>
-  <p>Used everywhere outside the battle view: debt lists, the plan, upcoming payments and details.</p>
-  <div class="gallery"><table id="frames"><thead><tr><th>Type</th><th>Frame</th><th>Calm</th><th>Angry</th><th>Furious</th></tr></thead><tbody></tbody></table></div>
+  <p>Used everywhere outside the battle view: debt lists, the plan, upcoming payments and details. They show damage too.</p>
+  <div class="gallery"><table id="frames"><thead><tr><th>Type</th><th>Frame</th><th>Calm</th><th>Angry</th><th>Furious</th><th>½ paid</th></tr></thead><tbody></tbody></table></div>
+  <p class="loading" id="loading1">Rendering…</p>
 </main>
 
 <script>
@@ -133,28 +139,32 @@ figcaption b { color: var(--ink); display: block; }
 /*__SCENES__*/
 
 // ---------- sample debts (made up, for the design) ----------
+// `peak` is the highest the debt has been; it sets the monster type. `balance` sets the damage.
 const DEBTS = [
-  { name: 'Student loan', type: 'dragon', temper: 'angry', apr: 7.5, balance: 4100000, max: 4800000, boss: true, species: 'Elder Dragon' },
-  { name: 'Car loan', type: 'drake', temper: 'angry', apr: 6.9, balance: 1450000, max: 1800000, species: 'Young Dragon' },
-  { name: 'Visa', type: 'troll', temper: 'furious', apr: 24.99, balance: 420000, max: 500000, species: 'Troll' },
-  { name: 'Store card', type: 'goblin', temper: 'furious', apr: 29.99, balance: 82000, max: 100000, species: 'Goblin' },
-  { name: 'Dentist', type: 'slime', temper: 'calm', apr: 0, balance: 32000, max: 40000, species: 'Slime' },
-  { name: 'Mortgage', type: 'castle', temper: 'angry', apr: 6.5, balance: 25000000, max: 26000000, species: 'Castle Keep' },
+  { name: 'Student loan', type: 'dragon', temper: 'angry', apr: 7.5, balance: 4100000, peak: 4800000, boss: true, species: 'Elder Dragon' },
+  { name: 'Car loan', type: 'drake', temper: 'angry', apr: 6.9, balance: 900000, peak: 1800000, species: 'Young Dragon' },
+  { name: 'Visa', type: 'troll', temper: 'furious', apr: 24.99, balance: 420000, peak: 500000, species: 'Troll' },
+  { name: 'Store card', type: 'goblin', temper: 'furious', apr: 29.99, balance: 30000, peak: 100000, species: 'Goblin' },
+  { name: 'Dentist', type: 'slime', temper: 'calm', apr: 0, balance: 32000, peak: 40000, species: 'Slime' },
+  { name: 'Mortgage', type: 'castle', temper: 'angry', apr: 6.5, balance: 21000000, peak: 26000000, species: 'Castle Keep' },
 ];
 const TEMPER_NAME = { calm: 'Calm', angry: 'Angry', furious: 'Furious' };
 const money = (c) => (c / 100).toLocaleString(undefined, { style: 'currency', currency: 'USD' });
+const dmgOf = (d) => damageLevel(d.balance, d.peak);
 
-// ---------- render cache (frames are rendered lazily, a few at a time, so the page stays responsive) ----------
-const W = 120, H = 168, M = 92; // stage and monster size in pixels
-const YAWS = [-1.4, -1.05, -0.7, -0.35, 0, 0.35, 0.7, 1.05, 1.4];
-const IDLE_T = [0, 0.48, 0.95, 1.43, 1.9, 2.38];
+// ---------- frames: one full-stage render per monster, damage level and (for the flyer) wing beat ----------
+const W = 120, H = 168;
+const GY = Math.round(stageGroundRow() * H); // the floor line every monster stands on
+const FLAP_T = [0, 0.49, 0.98, 1.47]; // a full wing beat for the flying dragon
 const toCanvas = (buf) => {
   const c = document.createElement('canvas');
   c.width = buf.w; c.height = buf.h;
   c.getContext('2d').putImageData(new ImageData(buf.data, buf.w, buf.h), 0, 0);
   return c;
 };
+const flashCache = new WeakMap();
 const flashOf = (cv) => {
+  if (flashCache.has(cv)) return flashCache.get(cv);
   const c = document.createElement('canvas');
   c.width = cv.width; c.height = cv.height;
   const g = c.getContext('2d');
@@ -162,37 +172,48 @@ const flashOf = (cv) => {
   g.globalCompositeOperation = 'source-atop';
   g.fillStyle = '#fff';
   g.fillRect(0, 0, c.width, c.height);
+  flashCache.set(cv, c);
   return c;
 };
 const cache = new Map();
 const queue = [];
-const key = (d, yaw, t) => `${d.type}|${d.temper}|${yaw}|${t}`;
-function frame(d, yaw = 0, t = 0) {
-  const k = key(d, yaw, t);
-  if (cache.has(k)) return cache.get(k);
-  if (!queue.some((q) => q.k === k)) queue.push({ k, d, yaw, t });
-  // nearest frame we already have
-  let best = null, bd = 1e9;
-  for (const y of YAWS) {
-    const kk = key(d, y, 0);
-    if (cache.has(kk) && Math.abs(y - yaw) < bd) { bd = Math.abs(y - yaw); best = cache.get(kk); }
+const fkey = (d, dmg, t) => `${d.type}|${d.temper}|${dmg}|${t}`;
+const isFlyer = (d) => MODELS[d.type].flying;
+function request(d, dmg, front = false) {
+  const ts = isFlyer(d) ? FLAP_T : [0.4];
+  for (const t of ts) {
+    const k = fkey(d, dmg, t);
+    if (cache.has(k) || queue.some((q) => q.k === k)) continue;
+    const job = { k, d, dmg, t };
+    if (front) queue.unshift(job); else queue.push(job);
   }
-  return best;
 }
-function want(d, yaws, ts = [0]) { for (const y of yaws) for (const t of ts) frame(d, y, t); }
+/** The frame to draw: the current damage level if rendered, else the nearest level that is (never a half-set). */
+function frameFor(d, time) {
+  const want = dmgOf(d);
+  const levels = [want, 0.75, 0.5, 0.25, 0, 1].filter((l, i, a) => a.indexOf(l) === i);
+  for (const lvl of levels) {
+    if (isFlyer(d)) {
+      const all = FLAP_T.map((t) => cache.get(fkey(d, lvl, t)));
+      if (all.every(Boolean)) return all[Math.floor(time * 5.2) % all.length];
+      if (all[0] && lvl === want && !all.every(Boolean)) continue;
+      if (all[0]) return all[0];
+    } else if (cache.has(fkey(d, lvl, 0.4))) return cache.get(fkey(d, lvl, 0.4));
+  }
+  // nothing complete yet: the first wing-beat frame at this damage, if there is one
+  return cache.get(fkey(d, want, isFlyer(d) ? FLAP_T[0] : 0.4)) || null;
+}
 function pump() {
   const start = performance.now();
-  while (queue.length && performance.now() - start < 30) {
+  while (queue.length && performance.now() - start < 40) {
     const q = queue.shift();
     if (cache.has(q.k)) continue;
-    cache.set(q.k, toCanvas(renderModel(q.d.type, q.d.temper, { w: M, h: M, yaw: q.yaw, t: q.t })));
+    cache.set(q.k, toCanvas(renderModel(q.d.type, q.d.temper, { w: W, h: H, framing: 'stage', t: q.t, damage: q.dmg })));
   }
-  setTimeout(pump, queue.length ? 0 : 120);
+  setTimeout(pump, queue.length ? 0 : 150);
 }
 const scenes = new Map();
 const sceneOf = (type) => scenes.get(type) || (scenes.set(type, toCanvas(renderScene(type, W, H))), scenes.get(type));
-const sword = toCanvas(renderSword());
-const shield = toCanvas(renderShield());
 
 // ---------- particles per habitat ----------
 const PARTICLES = { fireflies: ['#e8ff8a', '#a8e060'], embers: ['#ffb040', '#ff6a1a'], mist: ['#c8d0e8', '#9aa4c4'], snow: ['#ffffff', '#c8d4f0'] };
@@ -214,95 +235,74 @@ function drawParticles(g, kind, time) {
 }
 
 // ---------- composing a view ----------
+/**
+ * Draw a monster frame on the stage. `turn` 0..1 squeezes it side-on (a smooth stand-in for turning),
+ * `x` shifts it. Idle motion (a bob, the slime's squish) is done here too, so no frames need swapping.
+ */
+function drawMonster(g, d, cv, x, turn, time, opts = {}) {
+  if (!cv) return;
+  const sx = 1 - 0.42 * Math.min(1, turn);
+  const breathe = d.type === 'slime' ? Math.sin(time * 3) * 0.05 : 0;
+  const bob = isFlyer(d) || d.type === 'castle' ? 0 : Math.round(Math.sin(time * 2.2) * 0.6);
+  const w = Math.round(W * sx * (1 - breathe * 0.6)), h = Math.round(H * (1 + breathe));
+  const dx = Math.round(x + (W - w) / 2) + (opts.shake ? Math.round(Math.sin(time * 70) * 2) : 0);
+  const dy = Math.round(GY - GY * (h / H)) + bob;
+  g.drawImage(opts.flash ? flashOf(cv) : cv, dx, dy, w, h);
+}
+
 // offset: -1..1 swipe progress (negative = moving to the next monster on the right).
 function compose(g, i, offset, time, opts = {}) {
   const d = DEBTS[i];
-  const dir = offset < 0 ? 1 : -1; // which neighbour is coming in
-  const j = (i + dir + DEBTS.length) % DEBTS.length;
-  const n = DEBTS[j];
+  const dir = offset < 0 ? 1 : -1;
+  const n = DEBTS[(i + dir + DEBTS.length) % DEBTS.length];
   const shift = offset * W;
   g.imageSmoothingEnabled = false;
   g.clearRect(0, 0, W, H);
-  // scenery pans at half speed, like turning your head
   g.drawImage(sceneOf(d.type), Math.round(shift * 0.5), 0);
   if (offset) g.drawImage(sceneOf(n.type), Math.round(shift * 0.5 + dir * W), 0);
   if (!opts.noParticles) drawParticles(g, HABITATS[d.type].particles, time);
-  // monsters: the current one turns away as it leaves, the next one turns toward you as it arrives
-  const snap = (y) => YAWS.reduce((a, b) => (Math.abs(b - y) < Math.abs(a - y) ? b : a));
-  const yawOut = snap(offset * 1.6);
-  const yawIn = snap(-dir * 1.4 * (1 - Math.min(1, Math.abs(offset) * 1.25)));
-  const idle = offset ? 0 : IDLE_T[Math.floor(time * 5) % IDLE_T.length];
-  const curF = frame(d, yawOut, idle) || frame(d, yawOut, 0);
-  const baseY = Math.round(H * 0.86) - M;
-  const cx = Math.round((W - M) / 2);
-  if (curF) {
-    const shake = opts.hit ? Math.round(Math.sin(time * 60) * 2) : 0;
-    g.drawImage(opts.hit && opts.flash ? flashOf(curF) : curF, cx + Math.round(shift * 1.1) + shake, baseY);
-  }
-  if (offset) {
-    const nf = frame(n, yawIn, 0);
-    // arrives faster than the old one leaves, so it's on screen early in the swipe
-    if (nf) g.drawImage(nf, cx + Math.round(dir * W * 1.1 * Math.pow(1 - Math.abs(offset), 1.6)), baseY);
-  }
-  // shield and sword (the sword thrusts toward the monster while attacking)
-  const thrust = opts.thrust || 0;
-  g.drawImage(shield, -10, H - shield.height + 8);
-  g.drawImage(sword, W - sword.width + 12 - Math.round(thrust * 22), H - sword.height + 26 - Math.round(thrust * 30));
-  if (thrust > 0.6) {
-    // slash streak
-    g.fillStyle = '#ffffff';
-    for (let k = 0; k < 14; k++) g.fillRect(cx + 20 + k * 3, baseY + 30 + k * 2 - (k % 2), 3, 1);
-  }
+  const a = Math.abs(offset);
+  drawMonster(g, d, frameFor(d, time), shift * 1.1, a * 1.6, time, { shake: opts.hit, flash: opts.flash });
+  if (offset) drawMonster(g, n, frameFor(n, time), dir * W * 1.1 * Math.pow(1 - a, 1.6), (1 - a) * 1.4, time);
 }
 
 // ---------- live phone mock ----------
 const stage = document.getElementById('stage');
 const sg = stage.getContext('2d');
 const screen = document.getElementById('screen');
-let cur = 0, drag = null, anim = null, hitUntil = 0, thrustT = -1;
+let cur = 0, drag = null, anim = null, hitUntil = 0;
 
 function renderHud() {
   const d = DEBTS[cur];
   const hud = document.getElementById('hud');
-  const pct = Math.max(0, (d.balance / d.max) * 100);
+  const pct = Math.max(0, (d.balance / d.peak) * 100);
   hud.innerHTML = `<canvas width="56" height="56" aria-hidden="true"></canvas>
     <div class="grow">
       <div class="name">${d.name}${d.boss ? '<span class="badge">BOSS</span>' : ''}</div>
       <small>${TEMPER_NAME[d.temper]} ${d.species} · ${d.apr}% APR</small>
       <div class="hp" role="meter" aria-label="HP" aria-valuenow="${Math.round(pct)}" aria-valuemin="0" aria-valuemax="100"><i style="width:${pct}%"></i>${d.boss ? [75, 50, 25].map((p) => `<span class="ph" style="left:${p}%"></span>`).join('') : ''}<b>${money(d.balance)}</b></div>
     </div>`;
-  const pc = hud.querySelector('canvas');
-  const pk = `p|${d.type}|${d.temper}`;
-  if (!cache.has(pk)) cache.set(pk, toCanvas(renderPortrait(d.type, d.temper, { size: 56 })));
-  pc.getContext('2d').drawImage(cache.get(pk), 0, 0);
+  const pk = `p|${d.type}|${d.temper}|${dmgOf(d)}`;
+  if (!cache.has(pk)) cache.set(pk, toCanvas(renderPortrait(d.type, d.temper, { size: 56, damage: dmgOf(d) })));
+  hud.querySelector('canvas').getContext('2d').drawImage(cache.get(pk), 0, 0);
   document.getElementById('dots').innerHTML = DEBTS.map((_, k) => `<i class="${k === cur ? 'on' : ''}"></i>`).join('');
   seedParticles(HABITATS[d.type].particles);
-  // get the frames this view and a swipe either way will need
-  const near = [DEBTS[cur], DEBTS[(cur + 1) % DEBTS.length], DEBTS[(cur - 1 + DEBTS.length) % DEBTS.length]];
-  want(near[0], [0], IDLE_T);
-  for (const d2 of near) want(d2, YAWS);
+  // this monster first, then its neighbours, then everyone else
+  request(d, dmgOf(d), true);
+  for (const k of [1, -1, 2, -2, 3]) { const n = DEBTS[(cur + k + DEBTS.length) % DEBTS.length]; request(n, dmgOf(n)); }
 }
 
 function go(dir) {
   if (anim) return;
   const from = drag ? drag.offset : 0;
-  const to = dir > 0 ? -1 : 1;
-  const t0 = performance.now();
-  anim = { from, to, t0, dur: 360 * (1 - Math.abs(from)) + 120, done: () => { cur = (cur + dir + DEBTS.length) % DEBTS.length; renderHud(); } };
+  anim = { from, to: dir > 0 ? -1 : 1, t0: performance.now(), dur: 380 * (1 - Math.abs(from)) + 140, done: () => { cur = (cur + dir + DEBTS.length) % DEBTS.length; renderHud(); } };
 }
-function settle() {
-  const from = drag.offset;
-  anim = { from, to: 0, t0: performance.now(), dur: 220, done: () => {} };
-}
-
-let lastOffset = 0;
 function loop(now) {
   const time = now / 1000;
   let offset = drag ? drag.offset : 0;
   if (anim) {
     const k = Math.min(1, (now - anim.t0) / anim.dur);
-    const e = 1 - Math.pow(1 - k, 3);
-    offset = anim.from + (anim.to - anim.from) * e;
+    offset = anim.from + (anim.to - anim.from) * (1 - Math.pow(1 - k, 3));
     if (k >= 1) {
       const done = anim.done;
       anim = null;
@@ -310,32 +310,25 @@ function loop(now) {
       done();
     }
   }
-  let thrust = 0;
-  if (thrustT >= 0) {
-    const k = (now - thrustT) / 320;
-    thrust = k < 0.4 ? k / 0.4 : k < 1 ? 1 - (k - 0.4) / 0.6 : 0;
-    if (k >= 1) thrustT = -1;
-  }
   const hit = now < hitUntil;
-  compose(sg, cur, offset, time, { thrust, hit, flash: hit && now < hitUntil - 260 });
-  lastOffset = offset;
+  compose(sg, cur, offset, time, { hit, flash: hit && now < hitUntil - 260 });
+  if (frameFor(DEBTS[cur], time)) document.getElementById('summon')?.remove();
   requestAnimationFrame(loop);
 }
 
 screen.addEventListener('pointerdown', (e) => {
   if (e.target.closest('button') || anim) return;
-  drag = { x0: e.clientX, offset: 0, id: e.pointerId };
+  drag = { x0: e.clientX, offset: 0 };
   stage.setPointerCapture(e.pointerId);
 });
 stage.addEventListener('pointermove', (e) => {
   if (!drag) return;
-  const w = stage.getBoundingClientRect().width;
-  drag.offset = Math.max(-1, Math.min(1, (e.clientX - drag.x0) / w));
+  drag.offset = Math.max(-1, Math.min(1, (e.clientX - drag.x0) / stage.getBoundingClientRect().width));
 });
 const end = () => {
   if (!drag) return;
   if (Math.abs(drag.offset) > 0.25) go(drag.offset < 0 ? 1 : -1);
-  else settle();
+  else anim = { from: drag.offset, to: 0, t0: performance.now(), dur: 220, done: () => {} };
   drag = null;
 };
 stage.addEventListener('pointerup', end);
@@ -348,69 +341,56 @@ document.addEventListener('keydown', (e) => {
 });
 document.getElementById('attack').onclick = () => {
   const d = DEBTS[cur];
-  thrustT = performance.now();
-  setTimeout(() => {
-    hitUntil = performance.now() + 420;
-    const dmg = Math.min(d.balance, Math.round(d.max * 0.06 / 100) * 100);
-    d.balance -= dmg;
-    const pop = document.createElement('div');
-    pop.className = 'dmg';
-    pop.textContent = `−${money(dmg)}`;
-    screen.appendChild(pop);
-    setTimeout(() => pop.remove(), 1200);
-    renderHud();
-  }, 130);
+  if (d.balance <= 0) return;
+  hitUntil = performance.now() + 420;
+  const dmg = Math.min(d.balance, Math.round((d.peak * 0.12) / 100) * 100);
+  d.balance = Math.max(1, d.balance - dmg); // the design keeps it alive so you can keep looking
+  const pop = document.createElement('div');
+  pop.className = 'dmg';
+  pop.textContent = `−${money(dmg)}`;
+  screen.appendChild(pop);
+  setTimeout(() => pop.remove(), 1200);
+  renderHud();
 };
 document.getElementById('info').onclick = () => {
-  const d = DEBTS[cur];
-  // in the app this opens the debt's details sheet
-  document.getElementById('info').textContent = `${d.name}: ${money(d.balance)}`;
-  setTimeout(() => (document.getElementById('info').textContent = 'Details'), 1400);
+  const b = document.getElementById('info');
+  b.textContent = `${DEBTS[cur].name}: ${money(DEBTS[cur].balance)}`; // in the app this opens the debt's details sheet
+  setTimeout(() => (b.textContent = 'Details'), 1400);
 };
 
-// ---------- storyboard (still frames) ----------
+// ---------- storyboard ----------
 function storyboard() {
-  const views = [['sb0', 0], ['sb1', -0.45], ['sb2', 0.45]];
-  const sbDebt = 1; // the car loan dragon
-  let ready = true;
-  for (const [id, off] of views) {
-    const g = document.getElementById(id).getContext('2d');
-    compose(g, sbDebt, off, 0.4, { noParticles: true });
-  }
-  // redraw until every frame those stills use has been rendered
-  const need = [DEBTS[sbDebt], DEBTS[sbDebt + 1], DEBTS[sbDebt - 1]];
-  for (const d of need) for (const y of YAWS) if (!cache.has(key(d, y, 0))) ready = false;
-  if (!ready) setTimeout(storyboard, 400);
+  const sb = 1; // the car loan dragon
+  for (const [id, off] of [['sb0', 0], ['sb1', -0.45], ['sb2', 0.45]]) compose(document.getElementById(id).getContext('2d'), sb, off, 0.4, { noParticles: true });
+  const need = [DEBTS[sb], DEBTS[sb + 1], DEBTS[sb - 1]];
+  if (!need.every((d) => frameFor(d, 0))) setTimeout(storyboard, 400);
 }
 
-// ---------- gallery ----------
-const TYPES = [
-  ['slime', 'Slime', 'Under $500'], ['goblin', 'Goblin', '$500–$2,000'], ['troll', 'Troll', '$2,000–$10,000'],
-  ['drake', 'Young Dragon', '$10,000–$40,000'], ['dragon', 'Elder Dragon', 'Over $40,000'], ['castle', 'Castle Keep', 'Mortgages'],
-];
+// ---------- galleries ----------
+const TYPES = [['slime', 'Slime', 'calm'], ['goblin', 'Goblin', 'furious'], ['troll', 'Troll', 'furious'], ['drake', 'Young Dragon', 'angry'], ['dragon', 'Elder Dragon', 'angry'], ['castle', 'Castle Keep', 'angry']];
 function gallery() {
-  const mt = document.querySelector('#models tbody');
-  const ft = document.querySelector('#frames tbody');
   const jobs = [];
-  for (const [type, name, range] of TYPES) {
+  const dt = document.querySelector('#damage tbody'), ft = document.querySelector('#frames tbody');
+  for (const [type, name, temper] of TYPES) {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<th scope="row">${name}<small>${range}</small></th>` + ['a', 'b', 'c', 'd', 'e'].map(() => '<td><canvas width="64" height="64"></canvas></td>').join('');
-    mt.appendChild(tr);
-    const cvs = tr.querySelectorAll('canvas');
-    [['calm', 0], ['angry', 0], ['furious', 0], ['angry', 0.75], ['angry', -1.35]].forEach(([tp, yaw], k) => jobs.push(() => cvs[k].getContext('2d').putImageData(new ImageData(renderModel(type, tp, { w: 64, h: 64, yaw, t: 0.4 }).data, 64, 64), 0, 0)));
+    tr.className = 'dmgrow';
+    tr.innerHTML = `<th scope="row">${name}</th>` + [0, 1, 2, 3, 4].map(() => '<td><canvas width="72" height="100"></canvas></td>').join('');
+    dt.appendChild(tr);
+    tr.querySelectorAll('canvas').forEach((cv, k) => jobs.push(() => cv.getContext('2d').putImageData(new ImageData(renderModel(type, temper, { w: 72, h: 100, framing: 'stage', damage: k / 4, t: 0.4 }).data, 72, 100), 0, 0)));
     const fr = document.createElement('tr');
-    fr.innerHTML = `<th scope="row">${name}</th><td>${FRAMES[type].name}</td>` + [0, 1, 2].map(() => '<td><canvas class="frame" width="56" height="56"></canvas></td>').join('');
+    fr.innerHTML = `<th scope="row">${name}</th><td>${FRAMES[type].name}</td>` + [0, 1, 2, 3].map(() => '<td><canvas class="frame" width="56" height="56"></canvas></td>').join('');
     ft.appendChild(fr);
-    const fcv = fr.querySelectorAll('canvas');
-    ['calm', 'angry', 'furious'].forEach((tp, k) => jobs.push(() => fcv[k].getContext('2d').putImageData(new ImageData(renderPortrait(type, tp, { size: 56 }).data, 56, 56), 0, 0)));
+    const fc = fr.querySelectorAll('canvas');
+    [['calm', 0], ['angry', 0], ['furious', 0], [temper, 0.5]].forEach(([tp, dmg], k) => jobs.push(() => fc[k].getContext('2d').putImageData(new ImageData(renderPortrait(type, tp, { size: 56, damage: dmg }).data, 56, 56), 0, 0)));
   }
   const step = () => {
+    if (queue.length) return setTimeout(step, 300); // battle frames first
     const t0 = performance.now();
-    while (jobs.length && performance.now() - t0 < 25) jobs.shift()();
+    while (jobs.length && performance.now() - t0 < 30) jobs.shift()();
     if (jobs.length) setTimeout(step, 16);
     else document.getElementById('loading1').remove();
   };
-  setTimeout(step, 1500);
+  setTimeout(step, 800);
 }
 
 renderHud();

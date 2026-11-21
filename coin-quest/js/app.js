@@ -9,7 +9,7 @@ import { formatMoney, parseMoney, centsToInput } from './money.js';
 import { todayISO, ymOf, addMonths, monthLabel, dayLabel, dueDateIn } from './dates.js';
 import {
   DEBT_TYPES, ENTRY_KINDS, balancesById, speciesFor, temperFor, monthlyInterest, isRegenerating, pendingInterest,
-  aprOn, isPaused, simDebt, missedPayment,
+  aprOn, isPaused, simDebt, missedPayment, peakBalance,
 } from './debts.js';
 import { simulatePayoff, projectDebt, STRATEGIES } from './planner.js';
 import {
@@ -24,7 +24,7 @@ import { XP, attackXp, levelInfo, streak } from './player.js';
 import { uid, emptyState, normalizeState } from './state.js';
 import { loadState, saveState, requestPersistence, downloadBackup, readBackup, hadLoadProblem } from './storage.js';
 import { drawSprite } from './sprites.js';
-import { MODELS, renderModel, renderPortrait } from './models.js';
+import { MODELS, renderModel, renderPortrait, damageLevel } from './models.js';
 import { esc, toast, openSheet, openForm, askConfirm } from './ui.js';
 import { lineChart, attachCharts, SERIES_COLORS } from './chart.js';
 import { ACCOUNT_TYPES, accountEvents, accountBalances, totalsByType, accountActivity } from './accounts.js';
@@ -152,9 +152,11 @@ function monsters() {
   const list = state.debts.map((d) => {
     const balance = bal.get(d.id);
     const rate = aprOn(d, today); // the rate charged today (after a promo ends, the after-promo rate)
-    const species = speciesFor(d, balance);
+    // The type comes from the highest the debt has ever been; paying it down only damages it.
+    const peak = Math.max(peakBalance(d, state.ledger), balance, 1);
+    const species = speciesFor(d, peak);
     const temper = temperFor(rate);
-    const maxHp = Math.max(d.startBalance, balance, 1);
+    const maxHp = peak;
     const paused = isPaused(d, today);
     return {
       ...d,
@@ -170,6 +172,7 @@ function monsters() {
       missed: balance > 0 ? missedPayment(d, state.ledger, today) : null,
       hpPct: Math.max(0, Math.min(100, (balance / maxHp) * 100)),
       alive: balance > 0,
+      dmg: balance > 0 ? damageLevel(balance, peak) : 1, // 0, .25, .5, .75 or 1
       boss: false,
     };
   });
@@ -238,22 +241,22 @@ const hasAnyData = () => state.debts.length || state.incomes.length || state.exp
  * Monsters use their framed portrait in lists and cards, and the full 3D-rendered model at large sizes
  * (scale 8+, the debt sheet). The hero still uses its 16x16 sprite.
  */
-function spriteCanvas(key, temper, scale, cls = '') {
+function spriteCanvas(key, temper, scale, cls = '', damage = 0) {
   const px = 16 * scale;
   if (MODELS[key]) {
     const full = scale >= 8;
     const size = full ? Math.round(px / 2) : px;
-    return `<canvas class="sprite ${full ? 'model' : 'portrait'} ${cls}" width="${size}" height="${size}" style="width:${px}px;height:${px}px" data-${full ? 'model' : 'portrait'}="${key}" data-temper="${temper}" aria-hidden="true"></canvas>`;
+    return `<canvas class="sprite ${full ? 'model' : 'portrait'} ${cls}" width="${size}" height="${size}" style="width:${px}px;height:${px}px" data-${full ? 'model' : 'portrait'}="${key}" data-temper="${temper}" data-damage="${damage}" aria-hidden="true"></canvas>`;
   }
   return `<canvas class="sprite ${cls}" width="${px}" height="${px}" data-sprite="${key}" data-temper="${temper}" data-scale="${scale}" aria-hidden="true"></canvas>`;
 }
 
 // Rendered portraits and models, by type, temper and size: each is drawn once.
 const artCache = new Map();
-function art(kind, type, temper, size) {
-  const k = `${kind}|${type}|${temper}|${size}`;
+function art(kind, type, temper, size, damage = 0) {
+  const k = `${kind}|${type}|${temper}|${size}|${damage}`;
   if (!artCache.has(k)) {
-    const buf = kind === 'portrait' ? renderPortrait(type, temper, { size }) : renderModel(type, temper, { w: size, h: size, t: 0.4 });
+    const buf = kind === 'portrait' ? renderPortrait(type, temper, { size, damage }) : renderModel(type, temper, { w: size, h: size, t: 0.4, damage });
     artCache.set(k, new ImageData(buf.data, buf.w, buf.h));
   }
   return artCache.get(k);
@@ -267,7 +270,7 @@ function paintSprites(root) {
   }
   for (const c of root.querySelectorAll('canvas[data-portrait], canvas[data-model]')) {
     const kind = c.dataset.portrait ? 'portrait' : 'model';
-    c.getContext('2d').putImageData(art(kind, c.dataset[kind], c.dataset.temper, c.width), 0, 0);
+    c.getContext('2d').putImageData(art(kind, c.dataset[kind], c.dataset.temper, c.width, Number(c.dataset.damage) || 0), 0, 0);
   }
 }
 
@@ -454,7 +457,7 @@ function reportCard() {
 
 function projectRow(m, right, cls = '') {
   return `<li><button class="row-btn" data-action="project" data-id="${m.id}">
-    ${spriteCanvas(m.species.key, m.temper.key, 3)}
+    ${spriteCanvas(m.species.key, m.temper.key, 3, '', m.dmg)}
     <span class="grow">${esc(m.name)}<small>${fmt(m.balance)} · ${m.rate}% APR${m.promo ? ` until ${dayLabel(m.promo.ends)}` : ''}</small></span>
     <small class="${cls}">${right}</small><span class="chev" aria-hidden="true">›</span>
   </button></li>`;
@@ -481,7 +484,7 @@ function openProjection(id) {
 
   const html = `
     <div class="pj-head">
-      ${spriteCanvas(m.species.key, m.temper.key, 3)}
+      ${spriteCanvas(m.species.key, m.temper.key, 3, '', m.dmg)}
       <div class="grow"><h2>${esc(m.name)}</h2>
         <small>${fmt(m.balance)} owed · ${m.rate}% APR · ${fmt(m.minPayment)} minimum${m.promo ? ` · ${m.apr}% until ${dayLabel(m.promo.ends)}, then ${m.promo.after}%` : ''}${m.paused ? ` · paused until ${dayLabel(m.pauseUntil)}` : ''}</small></div>
     </div>
@@ -663,7 +666,7 @@ function spendView() {
       <h2>Debts</h2>
       ${ms.length ? `<ul class="rows">${ms.sort((a, b) => b.balance - a.balance).map((d) => `
         <li><button class="row-btn" data-action="open-debt" data-id="${d.id}">
-          ${spriteCanvas(d.species.key, d.temper.key, 3, d.alive ? '' : 'dead')}
+          ${spriteCanvas(d.species.key, d.temper.key, 3, d.alive ? '' : 'dead', d.dmg)}
           <span class="grow">${esc(d.name)}<small>${d.alive ? `${typeLabel(d.type)} · ${d.rate}% APR${d.promo ? ` until ${dayLabel(d.promo.ends)}, then ${d.promo.after}%` : ''}${d.paused ? ` · paused until ${dayLabel(d.pauseUntil)}` : ''}${d.missed ? ' · missed payment' : ''}${d.include ? '' : ' · benched'}` : 'Paid off'}</small></span>
           <b>${fmt(Math.max(0, d.balance))}</b>
         </button></li>`).join('')}</ul>` : '<p class="empty">No debts yet. Add each loan or card you owe on.</p>'}
@@ -701,7 +704,7 @@ function monsterCard(m) {
   ].join('');
   return `
     <button class="card monster ${m.alive ? '' : 'dead'} ${m.boss && m.alive ? 'is-boss' : ''} ${m.missed ? 'enraged' : ''}" data-action="open-debt" data-id="${m.id}">
-      ${spriteCanvas(m.species.key, m.temper.key, m.boss && m.alive ? 5 : 4)}
+      ${spriteCanvas(m.species.key, m.temper.key, m.boss && m.alive ? 5 : 4, '', m.dmg)}
       <div class="grow">
         <div class="m-name">${esc(m.name)}</div>
         <small>${m.alive ? `${m.temper.name} ${m.species.name}` : 'Defeated'} · ${m.rate}% APR</small>
@@ -1166,7 +1169,7 @@ function budgetView() {
       <h2>Debt minimum payments</h2>
       ${alive.length ? `<ul class="rows">${alive.map((d) => `
         <li><button class="row-btn" data-action="open-debt" data-id="${d.id}">
-          ${spriteCanvas(d.species.key, d.temper.key, 3)}
+          ${spriteCanvas(d.species.key, d.temper.key, 3, '', d.dmg)}
           <span class="grow">${esc(d.name)}<small>${fmt(d.balance)} owed</small></span>
           <b>${fmt(d.minPayment)}<small>/mo</small></b>
         </button></li>`).join('')}</ul>` : '<p class="empty">No debts.</p>'}
@@ -1459,7 +1462,7 @@ function openDebt(id, hit = 0) {
   const interest = own.filter((e) => e.kind === 'interest').reduce((s, e) => s + e.amount, 0);
   const html = `
     <div class="arena ${hit > 0 ? 'hit' : hit < 0 ? 'heal' : ''}">
-      ${spriteCanvas(m.species.key, m.temper.key, 10, m.alive ? '' : 'dead')}
+      ${spriteCanvas(m.species.key, m.temper.key, 10, m.alive ? '' : 'dead', m.dmg)}
       ${hit ? `<span class="dmg ${hit < 0 ? 'heal' : ''}">${hit > 0 ? '−' : '+'}${fmt(Math.abs(hit))}</span>` : ''}
     </div>
     <h2>${esc(m.name)}</h2>
@@ -1713,7 +1716,7 @@ function upcomingCard() {
         return `
           <li class="${due ? 'due' : ''}">
             <button class="row-btn" data-action="edit-scheduled" data-id="${x.id}">
-              ${debt ? spriteCanvas(debt.species.key, debt.temper.key, 3) : ''}
+              ${debt ? spriteCanvas(debt.species.key, debt.temper.key, 3, '', debt.dmg) : ''}
               <span class="grow">${esc(debt ? debt.name : x.name)}<small>${due ? 'Due ' : ''}${dayLabel(x.date)} · ${esc(what)}</small></span>
               <b>${fmt(x.amount)}</b>
             </button>

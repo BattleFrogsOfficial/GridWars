@@ -54,6 +54,31 @@ export function temperFor(apr) {
   return t;
 }
 
+/**
+ * The highest balance a debt has ever had: its starting balance, or more if interest and charges pushed it
+ * higher before payments brought it down. A monster's type is set by this, so paying a debt down makes it
+ * more and more damaged instead of turning it into a weaker monster.
+ */
+export function peakBalance(debt, ledger) {
+  let bal = debt.startBalance;
+  let peak = bal;
+  const own = ledger.filter((e) => e.debtId === debt.id).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  // within a day, count increases before payments so a same-day charge and payment still registers the peak
+  let i = 0;
+  while (i < own.length) {
+    const day = own[i].date;
+    let up = 0, down = 0;
+    for (; i < own.length && own[i].date === day; i++) {
+      if (own[i].amount > 0) up += own[i].amount;
+      else down += own[i].amount;
+    }
+    bal += up;
+    if (bal > peak) peak = bal;
+    bal += down;
+  }
+  return peak;
+}
+
 /** Which sprite to draw. Mortgages are always a castle boss; everything else follows its tier. */
 export function speciesFor(debt, balanceCents) {
   if (debt.type === 'mortgage') return { key: 'castle', name: 'Castle Keep' };

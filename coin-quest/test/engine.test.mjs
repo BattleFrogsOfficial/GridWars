@@ -501,3 +501,20 @@ test('game: achievements, weekly quests, boss phases, skins', async () => {
   assert.deepEqual(g.unlockedSkins(0), ['adventurer']);
   assert.ok(g.unlockedSkins(100000).includes('champion'));
 });
+
+test('monster type comes from the peak balance; paying down only adds damage', async () => {
+  const { peakBalance, speciesFor } = await import('../js/debts.js');
+  const { damageLevel } = await import('../js/models.js');
+  const d = { id: 'p', startBalance: 1500000, type: 'student' };
+  const ledger = [
+    { debtId: 'p', kind: 'interest', amount: 100000, date: '2026-02-01' }, // up to $16,000
+    { debtId: 'p', kind: 'payment', amount: -1500000, date: '2026-03-01' }, // down to $1,000
+  ];
+  assert.equal(peakBalance(d, ledger), 1600000);
+  assert.equal(speciesFor(d, peakBalance(d, ledger)).key, 'drake'); // still a dragon at $1,000 left
+  assert.equal(damageLevel(100000, 1600000), 1); // 94% paid: the most damaged look
+  assert.equal(damageLevel(1600000, 1600000), 0);
+  assert.equal(damageLevel(800000, 1600000), 0.5);
+  // a same-day charge and payment still counts the charge toward the peak
+  assert.equal(peakBalance({ id: 'q', startBalance: 1000 }, [{ debtId: 'q', amount: 500, date: '2026-01-01' }, { debtId: 'q', amount: -1400, date: '2026-01-01' }]), 1500);
+});
