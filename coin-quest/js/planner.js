@@ -66,3 +66,48 @@ export function simulatePayoff(debts, extraCents, strategy = 'avalanche', maxMon
   const feasible = live.every((d) => d.bal <= 0);
   return { feasible, months: month, totalInterest, totalPaid, kills, timeline, budget };
 }
+
+/**
+ * Month-by-month projection for ONE debt under a what-if scenario.
+ * @param {{balance:number, apr:number, minPayment:number}} debt  cents / APR %
+ * @param {object} s
+ *   s.monthly      regular payment each month (default: the minimum)
+ *   s.extra        { amount, every } extra payment on top; every = 0 means one time (this month),
+ *                  otherwise every N months starting this month
+ *   s.missed       { count, fee } skip the next `count` payments, each adding `fee`; payments then resume
+ * Interest is added before each month's payment, as in simulatePayoff.
+ * Assumes a fixed regular payment (real card minimums shrink as the balance falls).
+ */
+export function projectDebt(debt, s = {}, maxMonths = 600) {
+  const monthly = Math.max(0, s.monthly ?? debt.minPayment);
+  const extraAmt = Math.max(0, s.extra?.amount || 0);
+  const every = Math.max(0, s.extra?.every ?? 0);
+  const missCount = Math.max(0, s.missed?.count || 0);
+  const fee = Math.max(0, s.missed?.fee || 0);
+  let bal = debt.balance;
+  let totalInterest = 0;
+  let totalFees = 0;
+  let totalPaid = 0;
+  let month = 0;
+  const timeline = [bal];
+  while (bal > 0 && month < maxMonths) {
+    month++;
+    const i = monthlyInterest(bal, debt.apr);
+    bal += i;
+    totalInterest += i;
+    let pay;
+    if (month <= missCount) {
+      pay = 0;
+      bal += fee;
+      totalFees += fee;
+    } else {
+      pay = monthly;
+    }
+    if (extraAmt && (every === 0 ? month === 1 : (month - 1) % every === 0)) pay += extraAmt;
+    pay = Math.min(pay, bal);
+    bal -= pay;
+    totalPaid += pay;
+    timeline.push(bal);
+  }
+  return { feasible: bal <= 0, months: month, totalInterest, totalFees, totalPaid, timeline };
+}

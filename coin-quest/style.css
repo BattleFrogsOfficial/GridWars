@@ -148,6 +148,23 @@ canvas.sprite.dead { filter: grayscale(1) brightness(0.6); }
 
 .month-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
 
+/* per-debt projections */
+.chev { color: var(--muted); font-size: 22px; line-height: 1; margin-left: 2px; }
+.pj-head { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; }
+.pj-head h2 { margin: 0; }
+.pj-chart { margin-bottom: 12px; }
+.scn { background: var(--bg); border: 2px solid transparent; border-radius: var(--radius); padding: 12px; margin-bottom: 10px; }
+.scn.on { border-color: var(--series-a); }
+.scn h3 { margin: 0 0 4px; color: var(--ink); font-size: 14px; }
+.scn .field { margin: 8px 0; }
+.scn input, .scn select { background: var(--panel); }
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.field-row .field { min-width: 0; }
+.scn-out p { margin: 6px 0 0; }
+.pj-date { font-size: 17px; }
+.pj-date b { color: var(--gold); }
+.pj-date small { display: inline; margin-left: 4px; }
+
 /* charts */
 .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
 .legend i { display: inline-block; width: 12px; height: 4px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }

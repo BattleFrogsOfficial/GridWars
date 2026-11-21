@@ -171,3 +171,27 @@ test('sprites are rectangular grids', () => {
     rows.forEach((r, i) => assert.equal(r.length, 16, `${key} row ${i}`));
   }
 });
+
+test('projectDebt scenarios', async () => {
+  const { projectDebt } = await import('../js/planner.js');
+  const debt = { balance: 100000, apr: 12, minPayment: 10000 };
+  const base = projectDebt(debt);
+  assert.equal(base.months, 11);
+  assert.equal(base.totalPaid, 100000 + base.totalInterest);
+  // Paying more finishes sooner with less interest
+  const more = projectDebt(debt, { monthly: 20000 });
+  assert.ok(more.months < base.months && more.totalInterest < base.totalInterest);
+  // One-time extra payment of the whole balance kills it in month 1
+  assert.equal(projectDebt(debt, { extra: { amount: 200000, every: 0 } }).months, 1);
+  // Recurring extra every 3 months beats the base but not a doubled payment
+  const ex3 = projectDebt(debt, { extra: { amount: 10000, every: 3 } });
+  assert.ok(ex3.months < base.months && ex3.months >= more.months);
+  // Missing 2 payments with a $30 fee: later, more interest, fees counted
+  const miss = projectDebt(debt, { missed: { count: 2, fee: 3000 } });
+  assert.ok(miss.months > base.months);
+  assert.equal(miss.totalFees, 6000);
+  assert.ok(miss.totalInterest > base.totalInterest);
+  assert.equal(miss.totalPaid, 100000 + miss.totalInterest + miss.totalFees);
+  // Payment below interest never finishes
+  assert.equal(projectDebt({ balance: 1000000, apr: 30, minPayment: 10000 }).feasible, false);
+});

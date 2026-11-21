@@ -5,12 +5,12 @@
 //   budget – income and budgeting
 //   setup  – settings and first-run setup
 
-import { formatMoney } from './money.js';
+import { formatMoney, parseMoney, centsToInput } from './money.js';
 import { todayISO, ymOf, addMonths, monthLabel, dayLabel } from './dates.js';
 import {
   DEBT_TYPES, ENTRY_KINDS, balancesById, speciesFor, temperFor, monthlyInterest, isRegenerating, pendingInterest,
 } from './debts.js';
-import { simulatePayoff, STRATEGIES } from './planner.js';
+import { simulatePayoff, projectDebt, STRATEGIES } from './planner.js';
 import { monthSummary, CATEGORY_KINDS, DEBT_CATEGORY_ID } from './budget.js';
 import { XP, attackXp, levelInfo, streak } from './player.js';
 import { uid, emptyState } from './state.js';
@@ -223,18 +223,18 @@ function planView() {
       </section>
 
       <section class="card">
-        <h2>Order of battle</h2>
+        <h2>Each debt</h2>
+        <p class="hint">Paid-off dates on this plan. Tap a debt for what-if projections.</p>
         <ol class="rows">
-          ${plan.kills.map((k) => {
-            const m = byId.get(k.id);
-            return `<li>${spriteCanvas(m.species.key, m.temper.key, 2)}<span class="grow">${esc(m.name)}</span><small>${monthLabel(addMonths(now, k.month), { month: 'short', year: 'numeric' })}</small></li>`;
-          }).join('')}
-          ${active.filter((m) => !plan.kills.some((k) => k.id === m.id)).map((m) => `<li>${spriteCanvas(m.species.key, m.temper.key, 2)}<span class="grow">${esc(m.name)}</span><small class="bad">never</small></li>`).join('')}
+          ${plan.kills.map((k) => projectRow(byId.get(k.id), monthLabel(addMonths(now, k.month), { month: 'short', year: 'numeric' }))).join('')}
+          ${active.filter((m) => !plan.kills.some((k) => k.id === m.id)).map((m) => projectRow(m, 'never', 'bad')).join('')}
+          ${benchedRows()}
         </ol>
         <p class="hint">Assumes rates stay the same and no new charges. An estimate, not financial advice.</p>
       </section>`;
   } else {
-    projection = `<section class="card empty-card"><p>Add your debts to see when you'll be debt free.</p><button class="btn primary" data-action="add-debt">Add a debt</button></section>`;
+    projection = `<section class="card empty-card"><p>Add your debts to see when you'll be debt free.</p><button class="btn primary" data-action="add-debt">Add a debt</button></section>
+      ${benchedRows() ? `<section class="card"><h2>Each debt</h2><p class="hint">Tap a debt for what-if projections.</p><ol class="rows">${benchedRows()}</ol></section>` : ''}`;
   }
 
   return `
@@ -267,6 +267,178 @@ function planView() {
       </ul>
       <p class="hint">Right column is what was left over (income minus spending, including debt payments).</p>
     </section>`;
+}
+
+function projectRow(m, right, cls = '') {
+  return `<li><button class="row-btn" data-action="project" data-id="${m.id}">
+    ${spriteCanvas(m.species.key, m.temper.key, 2)}
+    <span class="grow">${esc(m.name)}<small>${fmt(m.balance)} · ${m.apr}% APR</small></span>
+    <small class="${cls}">${right}</small><span class="chev" aria-hidden="true">›</span>
+  </button></li>`;
+}
+
+function benchedRows() {
+  return monsters().filter((m) => m.alive && !m.include).map((m) => projectRow(m, 'benched')).join('');
+}
+
+// ---------- per-debt what-if projections ----------
+
+const EVERY_OPTIONS = [
+  [0, 'Just once, now'], [1, 'Every month'], [2, 'Every 2 months'], [3, 'Every 3 months'], [6, 'Every 6 months'], [12, 'Once a year'],
+];
+
+function openProjection(id) {
+  const m = monsters().find((x) => x.id === id);
+  if (!m) return;
+  const now = ymOf(todayISO());
+  const debt = { balance: m.balance, apr: m.apr, minPayment: m.minPayment };
+  const roundUp = (c, step) => Math.ceil(c / step) * step;
+  const defMonthly = roundUp(Math.max(m.minPayment * 2, m.minPayment + 2500, 1000), 500);
+  let active = 'monthly';
+
+  const html = `
+    <div class="pj-head">
+      ${spriteCanvas(m.species.key, m.temper.key, 3)}
+      <div class="grow"><h2>${esc(m.name)}</h2>
+        <small>${fmt(m.balance)} owed · ${m.apr}% APR · ${fmt(m.minPayment)} minimum</small></div>
+    </div>
+    <div class="pj-chart"></div>
+
+    <section class="scn" data-scn="min">
+      <h3>1. Minimum payments only</h3>
+      <p class="hint">Paying ${fmt(m.minPayment)} every month.</p>
+      <div class="scn-out" aria-live="polite"></div>
+    </section>
+
+    <section class="scn" data-scn="monthly">
+      <h3>2. Pay a set amount each month</h3>
+      <div class="field"><label for="pj-monthly">Monthly payment</label>
+        <input id="pj-monthly" inputmode="decimal" autocomplete="off" value="${centsToInput(defMonthly)}"></div>
+      <div class="scn-out" aria-live="polite"></div>
+    </section>
+
+    <section class="scn" data-scn="extra">
+      <h3>3. Make extra payments</h3>
+      <p class="hint">On top of the ${fmt(m.minPayment)} minimum.</p>
+      <div class="field-row">
+        <div class="field"><label for="pj-extra">Extra amount</label>
+          <input id="pj-extra" inputmode="decimal" autocomplete="off" value="100.00"></div>
+        <div class="field"><label for="pj-every">How often</label>
+          <select id="pj-every">${EVERY_OPTIONS.map(([v, l]) => `<option value="${v}" ${v === 3 ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+      </div>
+      <div class="scn-out" aria-live="polite"></div>
+    </section>
+
+    <section class="scn" data-scn="missed">
+      <h3>4. Miss payments</h3>
+      <p class="hint">Skip the next payments, then go back to the minimum.</p>
+      <div class="field-row">
+        <div class="field"><label for="pj-miss">Payments missed</label>
+          <input id="pj-miss" inputmode="numeric" autocomplete="off" value="1"></div>
+        <div class="field"><label for="pj-fee">Late fee each</label>
+          <input id="pj-fee" inputmode="decimal" autocomplete="off" value="30.00"></div>
+      </div>
+      <p class="hint">Check your own late fee in your card or loan terms. Missed payments can also raise your rate and hurt your credit score, which this doesn't include.</p>
+      <div class="scn-out" aria-live="polite"></div>
+    </section>
+
+    <p class="hint">Assumes the rate stays at ${m.apr}% and no new charges. A fixed minimum is used; card minimums usually shrink as the balance falls, which makes the real minimums-only path slower.</p>`;
+
+  const sheet = openSheet(html, { className: 'projection' });
+  const el = sheet.el;
+  paintSprites(el);
+  const $ = (sel) => el.querySelector(sel);
+
+  const describe = (r, base) => {
+    if (!r.feasible) {
+      return `<p class="pj-date bad">Never paid off</p><p>At this rate interest outgrows the payment. You need more than ${fmt(monthlyInterest(m.balance, m.apr))} a month just to keep up.</p>`;
+    }
+    let cmp = '';
+    if (base && base !== r && base.feasible) {
+      const dm = base.months - r.months;
+      const di = base.totalInterest + (base.totalFees || 0) - r.totalInterest - r.totalFees;
+      if (dm === 0 && di === 0) cmp = '<p class="hint">Same as minimums only.</p>';
+      else {
+        const time = dm > 0 ? `<b class="good">${monthsLabel(dm)} sooner</b>` : dm < 0 ? `<b class="bad">${monthsLabel(-dm)} later</b>` : 'same date';
+        const money = di > 0 ? `<b class="good">${fmt(di)} less</b> in interest and fees` : di < 0 ? `<b class="bad">${fmt(-di)} more</b> in interest and fees` : 'same cost';
+        cmp = `<p>vs. minimums only: ${time}, ${money}.</p>`;
+      }
+    } else if (base && base !== r && !base.feasible) {
+      cmp = '<p class="good">Minimums alone never pay this off; this does.</p>';
+    }
+    return `<p class="pj-date">Paid off <b>${monthLabel(addMonths(now, r.months))}</b> <small>in ${monthsLabel(r.months)}</small></p>
+      <p>Interest ${fmt(r.totalInterest)}${r.totalFees ? ` + fees ${fmt(r.totalFees)}` : ''} · total paid ${fmt(r.totalPaid)}</p>${cmp}`;
+  };
+
+  const compute = () => {
+    const base = projectDebt(debt);
+    const results = { min: base };
+    const outs = {};
+
+    const monthly = parseMoney($('#pj-monthly').value);
+    if (monthly == null || monthly <= 0) outs.monthly = '<p class="bad">Enter a monthly amount.</p>';
+    else {
+      results.monthly = projectDebt(debt, { monthly });
+      outs.monthly = (monthly < m.minPayment ? `<p class="bad">That's below the ${fmt(m.minPayment)} minimum, so the lender would treat it as a missed payment.</p>` : '') + describe(results.monthly, base);
+    }
+
+    const extra = parseMoney($('#pj-extra').value);
+    if (extra == null || extra < 0) outs.extra = '<p class="bad">Enter an extra amount.</p>';
+    else {
+      results.extra = projectDebt(debt, { extra: { amount: extra, every: Number($('#pj-every').value) } });
+      outs.extra = describe(results.extra, base);
+    }
+
+    const miss = Number($('#pj-miss').value);
+    const fee = parseMoney($('#pj-fee').value || '0');
+    if (!Number.isInteger(miss) || miss < 0 || miss > 24) outs.missed = '<p class="bad">Enter a number of payments from 0 to 24.</p>';
+    else if (fee == null || fee < 0) outs.missed = '<p class="bad">Enter a late fee (0 if none).</p>';
+    else {
+      results.missed = projectDebt(debt, { missed: { count: miss, fee } });
+      outs.missed = describe(results.missed, base);
+    }
+    outs.min = describe(base, null);
+
+    for (const sec of el.querySelectorAll('.scn')) {
+      sec.querySelector('.scn-out').innerHTML = outs[sec.dataset.scn];
+      sec.classList.toggle('on', sec.dataset.scn === active && active !== 'min');
+    }
+
+    // Chart: minimums only vs the scenario being edited (two lines, so the colors stay distinguishable).
+    const cmp = active !== 'min' ? results[active] : null;
+    const spanOf = (r) => (r.feasible ? r.months : 120);
+    const span = Math.min(360, Math.max(6, spanOf(base), cmp ? spanOf(cmp) : 0));
+    const pad = (arr) => Array.from({ length: span + 1 }, (_, i) => Math.max(0, arr[i] ?? 0));
+    const names = { monthly: 'Set monthly amount', extra: 'With extra payments', missed: 'With missed payments' };
+    const series = [];
+    if (cmp) series.push({ key: 'plan', name: names[active], color: SERIES_COLORS.plan, values: pad(cmp.timeline) });
+    series.push({ key: 'baseline', name: 'Minimums only', color: SERIES_COLORS.baseline, values: pad(base.timeline) });
+    $('.pj-chart').innerHTML = lineChart({
+      series,
+      xLabel: (i) => (i === 0 ? 'Now' : monthLabel(addMonths(now, i), { month: 'short', year: 'numeric' })),
+      yFmt: (v, full) => fmt(v, { compact: !full }),
+      ariaLabel: `${m.name} balance over time`,
+    });
+    attachCharts($('.pj-chart'));
+  };
+
+  el.addEventListener('input', compute);
+  el.addEventListener('change', compute);
+  el.addEventListener('focusin', (e) => {
+    const sec = e.target.closest('.scn');
+    if (sec && sec.dataset.scn !== active) {
+      active = sec.dataset.scn;
+      compute();
+    }
+  });
+  el.addEventListener('click', (e) => {
+    const sec = e.target.closest('.scn');
+    if (sec && sec.dataset.scn !== active) {
+      active = sec.dataset.scn;
+      compute();
+    }
+  });
+  compute();
 }
 
 // ---------- tab 2: spending ----------
@@ -902,6 +1074,7 @@ function onClick(e) {
   const actions = {
     'add-debt': () => addDebt(),
     'open-debt': () => openDebt(a.dataset.id),
+    project: () => openProjection(a.dataset.id),
     'add-payment': () => logDebtEntry('payment'),
     'add-charge': () => logDebtEntry('charge'),
     'add-income': () => addIncome(),

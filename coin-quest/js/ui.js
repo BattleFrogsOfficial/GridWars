@@ -63,7 +63,13 @@ export function openSheet(html, { onAction, onClose, prepare, className = '' } =
     onClose?.();
   });
   dlg.addEventListener('click', (e) => {
-    if (e.target === dlg) return close(); // tap on backdrop
+    if (e.target === dlg) {
+      // The dialog element itself receives clicks on its padding too; only close for taps outside its box (the backdrop).
+      const r = dlg.getBoundingClientRect();
+      const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+      if (!inside) return close();
+      return;
+    }
     const a = e.target.closest('[data-action]');
     if (!a) return;
     if (a.dataset.action === 'close') return close();
