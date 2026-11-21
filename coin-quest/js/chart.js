@@ -19,35 +19,48 @@ let nextId = 0;
 export function lineChart(opts) {
   const id = 'chart' + nextId++;
   const n = opts.series[0].values.length;
-  const max = Math.max(1, ...opts.series.flatMap((s) => s.values));
+  const all = opts.series.flatMap((s) => s.values);
+  const max = Math.max(1, ...all);
+  const min = Math.min(0, ...all); // projected balances can go below zero
   const x = (i) => M.l + (i / Math.max(1, n - 1)) * (W - M.l - M.r);
-  const y = (v) => M.t + (1 - v / max) * (H - M.t - M.b);
-  charts.set(id, { ...opts, n, x, y });
+  const y = (v) => M.t + (1 - (v - min) / (max - min)) * (H - M.t - M.b);
+  // Index from which values are projected (drawn dashed); none if absent.
+  const split = opts.splitAt ?? n - 1;
+  charts.set(id, { ...opts, n, x, y, split });
 
-  const grid = [0, 0.5, 1]
-    .map((f) => `<line class="grid" x1="${M.l}" x2="${W - M.r}" y1="${y(max * f)}" y2="${y(max * f)}"/>`)
+  const grid = [min, (min + max) / 2, max, ...(min < 0 ? [0] : [])]
+    .map((v) => `<line class="grid ${v === 0 && min < 0 ? 'zero' : ''}" x1="${M.l}" x2="${W - M.r}" y1="${y(v)}" y2="${y(v)}"/>`)
     .join('');
+  const pts = (vals, from, to) => vals.slice(from, to + 1).map((v, j) => `${x(from + j).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  const poly = (s, from, to, dashed) =>
+    to > from
+      ? `<polyline points="${pts(s.values, from, to)}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" ${dashed ? 'stroke-dasharray="5 5"' : ''}/>`
+      : '';
   // Draw the first series last so it sits on top where lines overlap.
   const lines = opts.series
     .slice()
     .reverse()
     .map((s) => {
-      const pts = s.values.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
-      return `<polyline points="${pts}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+      // A lone actual point (nothing to connect yet) still gets a visible marker.
+      const dot = split === 0 ? `<circle cx="${x(0)}" cy="${y(s.values[0])}" r="4" fill="${s.color}"/>` : '';
+      return poly(s, 0, split, false) + poly(s, split, n - 1, true) + dot;
     })
     .join('');
-  const ticks = [0, Math.floor((n - 1) / 2), n - 1]
-    .map((i, k) => `<text class="tick" x="${x(i)}" y="${H - 8}" text-anchor="${['start', 'middle', 'end'][k]}">${esc(opts.xLabel(i))}</text>`)
+  const tickIdx = [...new Set([0, split < n - 1 && split > 0 ? split : Math.floor((n - 1) / 2), n - 1])];
+  const ticks = tickIdx
+    .map((i) => `<text class="tick" x="${x(i)}" y="${H - 8}" text-anchor="${i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle'}">${esc(opts.xLabel(i))}</text>`)
     .join('');
+  const nowLine = split < n - 1 ? `<line class="now" x1="${x(split)}" x2="${x(split)}" y1="${M.t}" y2="${H - M.b}"/>` : '';
 
   return `
     <div class="chart" id="${id}">
-      <div class="legend">${opts.series.map((s) => `<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join('')}</div>
+      <div class="legend">${opts.series.map((s) => `<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join('')}${split < n - 1 ? '<span><i class="dash"></i>Projected</span>' : ''}</div>
       <div class="chart-box">
         <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts.ariaLabel)}">
           ${grid}
           <text class="tick" x="${M.l}" y="${M.t - 8}">${esc(opts.yFmt(max))}</text>
-          ${lines}${ticks}
+          ${min < 0 ? `<text class="tick" x="${W - M.r}" y="${y(min) - 4}" text-anchor="end">${esc(opts.yFmt(min))}</text>` : ''}
+          ${nowLine}${lines}${ticks}
           <line class="cross" x1="0" x2="0" y1="${M.t}" y2="${H - M.b}" visibility="hidden"/>
           ${opts.series.map((s) => `<circle class="dot" data-key="${s.key}" r="4" fill="${s.color}" visibility="hidden"/>`).join('')}
           <rect class="hit" x="0" y="0" width="${W}" height="${H}" fill="transparent"/>
@@ -79,7 +92,7 @@ export function attachCharts(root) {
         d.setAttribute('cy', c.y(c.series[k].values[i]));
         d.setAttribute('visibility', 'visible');
       });
-      tip.innerHTML = `<b>${esc(c.xLabel(i))}</b>${c.series
+      tip.innerHTML = `<b>${esc(c.xLabel(i))}${i > c.split ? ' (projected)' : ''}</b>${c.series
         .map((s) => `<span><i style="background:${s.color}"></i>${esc(s.name)} <b>${esc(c.yFmt(s.values[i], true))}</b></span>`)
         .join('')}`;
       tip.hidden = false;

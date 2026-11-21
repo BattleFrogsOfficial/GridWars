@@ -165,11 +165,25 @@ canvas.sprite.dead { filter: grayscale(1) brightness(0.6); }
 
 /* current situation */
 .worth { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 8px 16px; }
-.worth-net { text-align: right; }
+.worth-net { text-align: left; }
 .worth-net b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
 .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; flex: none; }
 .row-btn .sw { width: 12px; height: 12px; }
 .card .chart { margin: 4px 0 8px; }
+
+/* chart controls */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
+.chip { min-height: 36px; padding: 4px 14px; border-radius: 18px; border: 2px solid var(--panel-2); background: none; color: var(--muted); font: inherit; font-weight: 800; cursor: pointer; }
+.chip.on { background: var(--panel-2); color: var(--ink); border-color: var(--series-b); }
+.card .seg + .chart, .chips + .chart { margin-top: 10px; }
+.switch { display: flex; align-items: center; gap: 10px; margin-top: 6px; font-weight: 700; cursor: pointer; }
+.switch input { width: 22px; min-height: 22px; accent-color: var(--gold); }
+
+/* upcoming planned payments */
+.rows li.due .row-btn small { color: var(--gold); }
+.rows li.due-actions { border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-top: 0; }
+.due-actions .btn { min-height: 40px; padding: 4px 14px; }
+.action-grid .wide-cell { grid-column: 1 / -1; }
 
 /* account setup */
 .wiz-progress { display: flex; gap: 4px; list-style: none; padding: 0; margin: 0 40px 8px 0; }
@@ -222,6 +236,9 @@ canvas.sprite.dead { filter: grayscale(1) brightness(0.6); }
 .chart svg { display: block; width: 100%; height: auto; touch-action: pan-y; }
 .chart .grid { stroke: rgba(255, 255, 255, 0.09); stroke-width: 1; }
 .chart .tick { fill: var(--muted); font: 700 11px var(--font); }
+.chart .grid.zero { stroke: rgba(255, 255, 255, 0.3); }
+.chart .now { stroke: var(--muted); stroke-width: 1; opacity: 0.5; }
+.legend i.dash { background: repeating-linear-gradient(90deg, var(--muted) 0 4px, transparent 4px 7px); }
 .chart .cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
 .chart .dot { stroke: var(--panel); stroke-width: 2; }
 .chart-tip {
@@ -237,6 +254,7 @@ canvas.sprite.dead { filter: grayscale(1) brightness(0.6); }
   display: grid;
   gap: 2px;
 }
+.chart-tip[hidden] { display: none; }
 .chart-tip i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
 .hist li { display: grid; grid-template-columns: 40px 1fr auto; align-items: center; gap: 10px; padding: 6px 0; }
 .hist-m { color: var(--muted); font-size: 13px; }

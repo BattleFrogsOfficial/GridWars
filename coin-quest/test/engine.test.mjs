@@ -180,7 +180,7 @@ test('normalizeState rejects foreign files, cleans bad values and migrates v1', 
   assert.throws(() => normalizeState({ app: 'coin-quest', version: 99 }));
   const s = normalizeState({
     app: 'coin-quest',
-    version: 3,
+    version: 4,
     debts: [{ id: 'a', startBalance: 1000, apr: -5, dueDay: 40, type: 'spaceship' }, { id: 'bad' }],
     ledger: [{ id: 'l', debtId: 'a', kind: 'payment', amount: -100, date: '2026-01-01' }, { id: 'm', debtId: 'zzz', kind: 'payment', amount: 1, date: '2026-01-01' }],
     categories: [{ id: 'x', name: 'X', limit: 1.5, target: -3 }],
@@ -207,7 +207,7 @@ test('normalizeState rejects foreign files, cleans bad values and migrates v1', 
   });
   assert.deepEqual(v1.categories.map((c) => [c.id, c.limit]), [['food', 0], ['debt-attack', 0]]);
   assert.equal(v1.settings.setupDone, true);
-  assert.equal(v1.version, 3);
+  assert.equal(v1.version, 4);
 });
 
 test('sprites are rectangular grids', () => {
@@ -271,8 +271,40 @@ test('account balances follow every input, ignore events before an account exist
   assert.equal(h.total.at(-1), bal.get('chk') + bal.get('sav') + bal.get('ira'));
   assert.equal(accountActivity(s, 'chk')[0].label, 'Moved money');
   // normalize keeps valid links and drops broken ones
-  const n = normalizeState(JSON.parse(JSON.stringify({ ...s, app: 'coin-quest', version: 3, moves: [...s.moves, { id: 'x', kind: 'transfer', from: 'nope', to: null, amount: 5, date: '2026-11-01' }] })));
+  const n = normalizeState(JSON.parse(JSON.stringify({ ...s, app: 'coin-quest', version: 4, moves: [...s.moves, { id: 'x', kind: 'transfer', from: 'nope', to: null, amount: 5, date: '2026-11-01' }] })));
   assert.equal(n.moves.length, 4);
   assert.equal(n.expenses.find((e) => e.id === 's').toAccountId, 'sav');
   assert.equal(accountBalances(n).get('chk'), bal.get('chk'));
+});
+
+test('money timeline: actual months then a projection that follows the budget and scheduled payments', async () => {
+  const { moneyTimeline } = await import('../js/projection.js');
+  const s = emptyState();
+  s.settings.startMonth = '2026-11';
+  s.accounts.push({ id: 'chk', name: 'Checking', type: 'cash', start: 300000, createdAt: '2026-11-01' });
+  s.accounts.push({ id: 'sav', name: 'Savings', type: 'savings', start: 100000, createdAt: '2026-11-01' });
+  s.incomeSources.push({ id: 'i', name: 'Job', amount: 400000, freq: 'monthly' });
+  s.bills.push({ id: 'b', name: 'Rent', amount: 200000, freq: 'monthly' });
+  s.categories.push({ id: 'g', name: 'Groceries', kind: 'need', limit: 50000, target: null });
+  s.categories.push({ id: 'e', name: 'Emergency', kind: 'savings', limit: 20000, target: null });
+  s.debts.push({ id: 'd', name: 'Card', type: 'credit', startBalance: 120000, apr: 0, minPayment: 50000, dueDay: 1, include: true, autoInterest: true, createdAt: '2026-11-01', accruedThrough: '2026-11-01' });
+  s.scheduled.push({ id: 'bf', name: 'Black Friday', amount: 30000, date: '2026-11-27', categoryId: 'other', accountId: 'chk' });
+  s.scheduled.push({ id: 'old', name: 'Past', amount: 99999, date: '2026-11-02', categoryId: 'other', accountId: 'chk' });
+  const t = moneyTimeline(s, '2026-11-21', { ahead: 4 });
+  assert.deepEqual(t.months, ['2026-11', '2026-12', '2027-01', '2027-02', '2027-03']);
+  assert.equal(t.splitAt, 0);
+  assert.equal(t.cash[0], 300000);
+  // Dec: +4000 -2000 rent -500 card -500 groceries -200 savings -300 Black Friday (later in Nov)
+  assert.equal(t.cash[1], 300000 + 400000 - 200000 - 50000 - 50000 - 20000 - 30000);
+  assert.equal(t.savings[1], 120000);
+  assert.equal(t.debts[0], 120000);
+  assert.equal(t.debts[1], 70000);
+  assert.equal(t.debts[3], 0); // $1,200 at $500/mo: paid off in month 3
+  // Month 3 pays only the last $200, month 4 pays nothing; cash grows faster
+  assert.equal(t.cash[3] - t.cash[2], 400000 - 200000 - 20000 - 50000 - 20000);
+  assert.equal(t.cash[4] - t.cash[3], 400000 - 200000 - 50000 - 20000);
+  assert.equal(t.spending[1], 200000 + 50000 + 50000 + 30000);
+  assert.equal(t.income[2], 400000);
+  // Projections off: only actual months
+  assert.equal(moneyTimeline(s, '2026-11-21', { projections: false }).months.length, 1);
 });

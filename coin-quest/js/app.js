@@ -20,7 +20,8 @@ import { loadState, saveState, requestPersistence, downloadBackup, readBackup } 
 import { drawSprite } from './sprites.js';
 import { esc, toast, openSheet, openForm, askConfirm } from './ui.js';
 import { lineChart, attachCharts, SERIES_COLORS } from './chart.js';
-import { ACCOUNT_TYPES, accountEvents, accountBalances, totalsByType, balanceHistory, accountActivity } from './accounts.js';
+import { ACCOUNT_TYPES, accountEvents, accountBalances, totalsByType, accountActivity } from './accounts.js';
+import { moneyTimeline } from './projection.js';
 
 let state = emptyState();
 const ui = { month: ymOf(todayISO()), persisted: null, installPrompt: null };
@@ -479,7 +480,9 @@ function spendView() {
       <button class="btn primary" data-action="add-payment" ${live.length ? '' : 'disabled'}>+ Debt payment</button>
       <button class="btn" data-action="add-debt">+ New debt</button>
       <button class="btn" data-action="add-charge" ${live.length ? '' : 'disabled'}>+ Charge on a debt</button>
+      <button class="btn wide-cell" data-action="add-scheduled">+ Plan a one-off payment</button>
     </div>
+    ${upcomingCard()}
 
     <section class="card">
       <h2>Debts</h2>
@@ -588,23 +591,13 @@ function situationCard() {
         <h2>Current situation</h2>
         <p>Add what you have right now in cash, savings and investments. Everything you log keeps it up to date from then on.</p>
         <button class="btn primary wide" data-action="add-account">+ Add an account</button>
-      </section>`;
+      </section>
+      ${moneyChartCard()}`;
   }
   const events = accountEvents(state);
   const bal = accountBalances(state, null, events);
   const t = totalsByType(state, null, events);
   const owed = monsters().filter((m) => m.alive).reduce((s, m) => s + m.balance, 0);
-  const h = balanceHistory(state, todayISO());
-  const types = Object.keys(ACCOUNT_TYPES).filter((k) => state.accounts.some((a) => a.type === k));
-  const chart = h.dates.length >= 2
-    ? lineChart({
-      series: types.map((k) => ({ key: k, name: ACCOUNT_TYPES[k], color: TYPE_COLORS[k], values: h[k] })),
-      xLabel: (i) => (i === h.dates.length - 1 ? 'Today' : dayLabel(h.dates[i])),
-      yFmt: (v, full) => fmt(v, { compact: !full }),
-      ariaLabel: 'Cash, savings and investments over time',
-    })
-    : '<p class="hint">The chart fills in as the days go by.</p>';
-
   return `
     <section class="card">
       <h2>Current situation</h2>
@@ -615,7 +608,10 @@ function situationCard() {
       <div class="stats">
         ${Object.entries(ACCOUNT_TYPES).map(([k, l]) => `<div><small><i class="sw" style="background:${TYPE_COLORS[k]}"></i>${l}</small><b>${fmt(t[k])}</b></div>`).join('')}
       </div>
-      ${chart}
+    </section>
+    ${moneyChartCard()}
+    <section class="card">
+      <h2>Accounts</h2>
       <ul class="rows">${state.accounts.map((a) => `
         <li><button class="row-btn" data-action="open-account" data-id="${a.id}">
           <i class="sw" style="background:${TYPE_COLORS[a.type]}"></i>
@@ -629,6 +625,57 @@ function situationCard() {
         <button class="btn" data-action="add-account">+ Account</button>
       </div>
       <p class="hint">Balances change when you log income, expenses and debt payments. If one drifts from your bank, tap it and choose Update balance.</p>
+    </section>`;
+}
+
+/** Chart series per view. Colors come from the palette-validated set (cash/savings/invested). */
+const CHART_VIEWS = {
+  checking: { label: 'Checking', series: () => [{ key: 'cash', name: 'Checking & cash', color: TYPE_COLORS.cash }] },
+  savings: {
+    label: 'Savings',
+    series: () => [
+      { key: 'savings', name: 'Savings', color: TYPE_COLORS.savings },
+      ...(state.accounts.some((a) => a.type === 'invest') ? [{ key: 'invest', name: 'Invested', color: TYPE_COLORS.invest }] : []),
+    ],
+  },
+  income: {
+    label: 'Income',
+    series: () => {
+      const c = state.settings.chart;
+      return [
+        ...(c.income ? [{ key: 'income', name: 'Income / mo', color: TYPE_COLORS.savings }] : []),
+        ...(c.spending ? [{ key: 'spending', name: 'Spending / mo', color: TYPE_COLORS.invest }] : []),
+        ...(c.debts ? [{ key: 'debts', name: 'Debts owed', color: TYPE_COLORS.cash }] : []),
+      ];
+    },
+  },
+};
+
+function moneyChartCard() {
+  const c = state.settings.chart;
+  const t = moneyTimeline(state, todayISO(), { projections: c.projections });
+  const series = CHART_VIEWS[c.view].series().map((s) => ({ ...s, values: t[s.key] }));
+  const now = ymOf(todayISO());
+  const chart = series.length
+    ? lineChart({
+      series,
+      splitAt: t.splitAt,
+      xLabel: (i) => (t.months[i] === now ? 'Now' : monthLabel(t.months[i], { month: 'short', year: '2-digit' })),
+      yFmt: (v, full) => fmt(v, { compact: !full }),
+      ariaLabel: `${CHART_VIEWS[c.view].label} over time${c.projections ? ', with projections' : ''}`,
+    })
+    : '<p class="empty">Turn on at least one line below.</p>';
+  const chip = (k, label) => `<button class="chip ${c[k] ? 'on' : ''}" aria-pressed="${c[k]}" data-action="chart-show" data-key="${k}">${label}</button>`;
+  return `
+    <section class="card">
+      <h2>Money over time</h2>
+      <div class="seg" role="group" aria-label="Chart view">
+        ${Object.entries(CHART_VIEWS).map(([k, v]) => `<button class="${k === c.view ? 'on' : ''}" aria-pressed="${k === c.view}" data-action="chart-view" data-key="${k}">${v.label}</button>`).join('')}
+      </div>
+      ${c.view === 'income' ? `<div class="chips">${chip('income', 'Income')}${chip('spending', 'Spending')}${chip('debts', 'Debts')}</div>` : ''}
+      ${chart}
+      <label class="switch"><input type="checkbox" data-change="chart-proj" ${c.projections ? 'checked' : ''}><span>Show projections for the next 12 months</span></label>
+      ${c.projections ? `<p class="hint">Dashed lines assume you follow your budget: pay, bills, debt payments on your plan, budget lines and planned one-off payments${state.scheduled.length ? ` (${state.scheduled.length} planned)` : ''}. Investments are held flat.</p>` : ''}
     </section>`;
 }
 
@@ -794,7 +841,8 @@ function budgetView() {
       <section class="card empty-card">
         <p>Your budget is built from your income, bills and debts. Set up your account to fill it in.</p>
         <button class="btn primary" data-action="goto" data-tab="setup">Go to setup</button>
-      </section>`;
+      </section>
+      ${moneyChartCard()}`;
   }
   const mins = debtMinsTotal();
   const p = monthlyPlan(state, mins);
@@ -1183,20 +1231,27 @@ function addIncome() {
   });
 }
 
-function addExpense() {
-  const options = [
+function expenseOptions() {
+  return [
     ...state.categories.filter((c) => c.kind !== 'debt').map((c) => ({ value: c.id, label: c.kind === 'savings' ? `${c.name} (savings)` : c.name })),
     { value: OTHER_CATEGORY_ID, label: 'Unplanned / other' },
   ];
+}
+
+/** Log an expense. `prefill` fills the form (used when a planned payment happens); onDone runs after saving. */
+function addExpense(prefill = {}, onDone = null) {
+  const options = expenseOptions();
+  const acct = withAccount('Paid from', ['cash', 'savings']);
+  if (acct[0] && prefill.accountId !== undefined) acct[0].value = prefill.accountId || '';
   openForm({
-    title: 'Log expense',
+    title: prefill.title || 'Log expense',
     intro: `Pick the budget line it comes from. For debt payments use “+ Debt payment”.${state.accounts.some((a) => a.type === 'savings') ? ' Money logged to a savings line moves into your savings account.' : ''}`,
     fields: [
-      { name: 'amount', label: 'Amount', type: 'money', required: true, positive: true },
-      { name: 'categoryId', label: 'Budget line', type: 'select', options, value: options[0].value },
-      ...withAccount('Paid from', ['cash', 'savings']),
-      { name: 'note', label: 'Note (optional)', type: 'text' },
-      { name: 'date', label: 'Date', type: 'date', value: todayISO() },
+      { name: 'amount', label: 'Amount', type: 'money', required: true, positive: true, value: prefill.amount ?? '' },
+      { name: 'categoryId', label: 'Budget line', type: 'select', options, value: options.some((o) => o.value === prefill.categoryId) ? prefill.categoryId : options[0].value },
+      ...acct,
+      { name: 'note', label: 'Note (optional)', type: 'text', value: prefill.note || '' },
+      { name: 'date', label: 'Date', type: 'date', value: prefill.date || todayISO() },
     ],
     onSubmit: (v) => {
       const isSaving = state.categories.find((c) => c.id === v.categoryId)?.kind === 'savings';
@@ -1205,6 +1260,7 @@ function addExpense() {
         s.expenses.push({ id: uid(), amount: v.amount, categoryId: v.categoryId, note: v.note || '', date: v.date, accountId: v.accountId || null, toAccountId: savingsAcct });
         markActive();
         gainXp(XP.log);
+        onDone?.(s);
       });
       const cat = summary(ymOf(v.date)).categories.find((c) => c.id === v.categoryId);
       const over = cat && cat.limit > 0 && cat.remaining < 0;
@@ -1213,7 +1269,70 @@ function addExpense() {
   });
 }
 
-/** Add or edit a budget line (an allocation of what's left over). */
+// ---------- planned one-off payments ----------
+
+function upcomingCard() {
+  if (!state.scheduled.length) return '';
+  const today = todayISO();
+  const items = state.scheduled.slice().sort((a, b) => a.date.localeCompare(b.date));
+  return `
+    <section class="card">
+      <h2>Upcoming payments</h2>
+      <ul class="rows">${items.map((x) => {
+        const due = x.date <= today;
+        return `
+          <li class="${due ? 'due' : ''}">
+            <button class="row-btn" data-action="edit-scheduled" data-id="${x.id}">
+              <span class="grow">${esc(x.name)}<small>${due ? 'Due ' : ''}${dayLabel(x.date)} · ${esc(catName(x.categoryId))}</small></span>
+              <b>${fmt(x.amount)}</b>
+            </button>
+          </li>
+          ${due ? `<li class="due-actions"><span class="grow">Did it happen?</span>
+            <button class="btn primary" data-action="log-scheduled" data-id="${x.id}">Log it</button>
+            <button class="btn" data-action="skip-scheduled" data-id="${x.id}">Skip</button></li>` : ''}`;
+      }).join('')}</ul>
+      <p class="hint">Planned payments count in your projections. They become real spending when you log them.</p>
+    </section>`;
+}
+
+function scheduleForm(item = null) {
+  const options = expenseOptions();
+  const acct = withAccount('Pay from', ['cash', 'savings']);
+  if (item && acct[0]) acct[0].value = item.accountId || '';
+  openForm({
+    title: item ? `Edit ${item.name}` : 'Plan a one-off payment',
+    intro: 'Something you know is coming, like Black Friday shopping, a trip or a car repair. It shows in your projections until it happens.',
+    fields: [
+      { name: 'name', label: 'What is it?', type: 'text', required: true, value: item?.name || '', placeholder: 'e.g. Black Friday shopping', max: 60 },
+      { name: 'amount', label: 'Amount', type: 'money', required: true, positive: true, value: item?.amount ?? '' },
+      { name: 'date', label: 'Date', type: 'date', value: item?.date || todayISO() },
+      { name: 'categoryId', label: 'Budget line', type: 'select', options, value: item?.categoryId || OTHER_CATEGORY_ID },
+      ...acct,
+    ],
+    submitLabel: item ? 'Save' : 'Plan it',
+    extra: item ? [{ label: 'Delete', action: 'delete', className: 'bad' }] : [],
+    onExtra: (_x, close) => {
+      close();
+      commit((s) => (s.scheduled = s.scheduled.filter((x) => x.id !== item.id)));
+    },
+    onSubmit: (v) => {
+      const fields = { name: v.name, amount: v.amount, date: v.date, categoryId: v.categoryId, accountId: v.accountId || null };
+      commit((s) => {
+        if (item) Object.assign(s.scheduled.find((x) => x.id === item.id), fields);
+        else s.scheduled.push({ id: uid(), note: '', ...fields });
+      });
+      toast(item ? 'Saved.' : `${v.name} planned for ${dayLabel(v.date)}.`);
+    },
+  });
+}
+
+function logScheduled(item) {
+  addExpense(
+    { title: `Log ${item.name}`, amount: item.amount, categoryId: item.categoryId, note: item.name, date: item.date > todayISO() ? todayISO() : item.date, accountId: item.accountId },
+    (s) => (s.scheduled = s.scheduled.filter((x) => x.id !== item.id)),
+  );
+}
+
 function categoryForm(c, preset = {}) {
   const isNew = !c;
   const isDebt = (c?.id ?? preset.id) === DEBT_CATEGORY_ID;
@@ -1615,7 +1734,7 @@ function onClick(e) {
     'add-payment': () => logDebtEntry('payment'),
     'add-charge': () => logDebtEntry('charge'),
     'add-income': () => addIncome(),
-    'add-expense': addExpense,
+    'add-expense': () => addExpense(),
     'add-cat': () => categoryForm(null),
     'edit-cat': () => categoryForm(state.categories.find((c) => c.id === a.dataset.id)),
     'add-debt-cat': () => categoryForm(null, { id: DEBT_CATEGORY_ID, name: 'Extra debt payments' }),
@@ -1627,6 +1746,17 @@ function onClick(e) {
     payday: () => recordRecurring('payday'),
     'pay-bill': () => recordRecurring('bill'),
     'move-money': () => moveMoney(),
+    'chart-view': () => commit((s) => (s.settings.chart.view = a.dataset.key)),
+    'chart-show': () => commit((s) => (s.settings.chart[a.dataset.key] = !s.settings.chart[a.dataset.key])),
+    'add-scheduled': () => scheduleForm(),
+    'edit-scheduled': () => scheduleForm(state.scheduled.find((x) => x.id === a.dataset.id)),
+    'log-scheduled': () => logScheduled(state.scheduled.find((x) => x.id === a.dataset.id)),
+    'skip-scheduled': async () => {
+      const item = state.scheduled.find((x) => x.id === a.dataset.id);
+      if (await askConfirm(`Skip ${item.name}? It's removed from your plans and nothing is logged.`, { okLabel: 'Skip it', title: 'Skip payment?' })) {
+        commit((s) => (s.scheduled = s.scheduled.filter((x) => x.id !== item.id)));
+      }
+    },
     'edit-goals': editGoals,
     goto: () => go(a.dataset.tab),
     month: () => {
@@ -1678,6 +1808,7 @@ function onClick(e) {
 async function onChange(e) {
   const k = e.target.dataset.change;
   if (k === 'currency') commit((s) => (s.settings.currency = e.target.value));
+  if (k === 'chart-proj') commit((s) => (s.settings.chart.projections = e.target.checked));
   if (k === 'restore') {
     const file = e.target.files?.[0];
     e.target.value = '';

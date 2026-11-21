@@ -7,7 +7,7 @@ import { DEBT_TYPES, ENTRY_KINDS } from './debts.js';
 import { ACCOUNT_TYPES, MOVE_KINDS } from './accounts.js';
 import { isValidISO, todayISO } from './dates.js';
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 export const APP_ID = 'coin-quest';
 
 export function uid() {
@@ -20,7 +20,10 @@ export function emptyState() {
     app: APP_ID,
     version: SCHEMA_VERSION,
     createdAt: todayISO(),
-    settings: { currency: 'USD', strategy: 'avalanche', extraCents: null, lastBackup: null, setupDone: false, startMonth: null },
+    settings: {
+      currency: 'USD', strategy: 'avalanche', extraCents: null, lastBackup: null, setupDone: false, startMonth: null,
+      chart: { view: 'checking', projections: true, income: true, spending: true, debts: true },
+    },
     goals: { payDebt: false, emergency: false, saveFor: false, fun: false, spendLess: false },
     player: { xp: 0, days: [] },
     incomeSources: [], // recurring income: { id, name, amount, freq }
@@ -32,6 +35,7 @@ export function emptyState() {
     expenses: [],
     accounts: [], // money you have: { id, name, type: cash|savings|invest, start, createdAt }
     moves: [], // money moving between accounts: { id, kind, from, to, amount, date, note }
+    scheduled: [], // planned one-off payments: { id, name, amount, date, categoryId, accountId }
   };
 }
 
@@ -130,6 +134,13 @@ export function normalizeState(raw) {
       extraCents: isInt(s.extraCents) && s.extraCents >= 0 ? s.extraCents : null,
       lastBackup: isValidISO(s.lastBackup) ? s.lastBackup : null,
       setupDone: s.setupDone === true,
+      chart: {
+        view: ['checking', 'savings', 'income'].includes(s.chart?.view) ? s.chart.view : 'checking',
+        projections: s.chart?.projections !== false,
+        income: s.chart?.income !== false,
+        spending: s.chart?.spending !== false,
+        debts: s.chart?.debts !== false,
+      },
       startMonth: typeof s.startMonth === 'string' && /^\d{4}-\d{2}$/.test(s.startMonth) ? s.startMonth : null,
     },
     goals: Object.fromEntries(Object.keys(base.goals).map((k) => [k, g[k] === true])),
@@ -148,6 +159,9 @@ export function normalizeState(raw) {
       .filter((e) => e && catIds.has(e.categoryId)),
     accounts,
     moves: arr(migrated.moves).map((m) => normMove(m, acctIds)).filter(Boolean),
+    scheduled: arr(migrated.scheduled)
+      .map((e) => normMoneyEntry(e, (x) => ({ name: str(x.name, 60) || 'Planned payment', categoryId: catIds.has(x.categoryId) ? x.categoryId : OTHER_CATEGORY_ID, accountId: acct(x.accountId) })))
+      .filter(Boolean),
   };
 }
 
@@ -169,6 +183,10 @@ function migrate(raw) {
   if (s.version === 2) {
     // v3 adds accounts (cash, savings, invested) and moves between them. Nothing to convert.
     s.version = 3;
+  }
+  if (s.version === 3) {
+    // v4 adds scheduled one-off payments and chart preferences. Nothing to convert.
+    s.version = 4;
   }
   return s;
 }

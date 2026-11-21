@@ -34,6 +34,7 @@ export function simulatePayoff(debts, extraCents, strategy = 'avalanche', maxMon
   const budget = live.reduce((s, d) => s + d.min, 0) + Math.max(0, extraCents);
   const kills = [];
   const timeline = [live.reduce((s, d) => s + d.bal, 0)];
+  const payments = []; // payments[k-1] = total paid in month k
   let totalInterest = 0;
   let totalPaid = 0;
   let month = 0;
@@ -59,12 +60,13 @@ export function simulatePayoff(debts, extraCents, strategy = 'avalanche', maxMon
       pool -= pay;
     }
     totalPaid += budget - pool;
+    payments.push(budget - pool);
     for (const d of active) if (d.bal <= 0) kills.push({ id: d.id, month });
     timeline.push(live.reduce((s, d) => s + d.bal, 0));
   }
 
   const feasible = live.every((d) => d.bal <= 0);
-  return { feasible, months: month, totalInterest, totalPaid, kills, timeline, budget };
+  return { feasible, months: month, totalInterest, totalPaid, kills, timeline, payments, budget };
 }
 
 /**
@@ -90,6 +92,7 @@ export function projectDebt(debt, s = {}, maxMonths = 600) {
   let totalPaid = 0;
   let month = 0;
   const timeline = [bal];
+  const payments = [];
   while (bal > 0 && month < maxMonths) {
     month++;
     const i = monthlyInterest(bal, debt.apr);
@@ -107,7 +110,8 @@ export function projectDebt(debt, s = {}, maxMonths = 600) {
     pay = Math.min(pay, bal);
     bal -= pay;
     totalPaid += pay;
+    payments.push(pay);
     timeline.push(bal);
   }
-  return { feasible: bal <= 0, months: month, totalInterest, totalFees, totalPaid, timeline };
+  return { feasible: bal <= 0, months: month, totalInterest, totalFees, totalPaid, timeline, payments };
 }

@@ -26,6 +26,8 @@ It installs from the website ("Add to Home Screen") and works offline. All data 
 | Budget | Monthly income (any pay frequency) − fixed bills − debt minimums = left over, which you assign to budget lines. Expenses are tracked against those lines each month |
 | Budget link | The "Extra debt payments" line is the extra paid on top of minimums in the plan. Debt payments above the minimums count against it automatically |
 | Current situation | Accounts (cash, savings, invested) with a starting balance; income, expenses, debt payments, paydays, bills and transfers move them, "Update balance" records a correction. Chart of each type over time |
+| Money over time | Chart on the Budget tab: Checking, Savings or Income view; optional 12-month projection (dashed) that assumes the budget is followed, including planned one-off payments |
+| Planned payments | One-off future payments (e.g. Black Friday) on the Spending tab. They count in projections and become real expenses when logged |
 | Save | One JSON document in IndexedDB. Backup = download that JSON; restore validates it first |
 
 ## Files
@@ -37,6 +39,7 @@ It installs from the website ("Add to Home Screen") and works offline. All data 
 | `js/planner.js` | Payoff simulation |
 | `js/budget.js` | Monthly budget summary |
 | `js/accounts.js` | Account balances, activity and history (current situation) |
+| `js/projection.js` | Month-by-month actuals and projection for the chart |
 | `js/chart.js` | SVG line chart with tap/hover tooltip |
 | `js/player.js` | XP, levels, streaks |
 | `js/state.js` | Save-file shape, validation, migrations |
