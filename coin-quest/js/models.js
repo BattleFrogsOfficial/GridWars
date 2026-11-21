@@ -133,12 +133,12 @@ function slime() {
   ], 0.6);
   // bites go last so they carve the finished body
   parts.push(...parts.splice(0, 3));
-  return { height: 0.81, head: 0.45, anim: 'squish', portrait: 'full', shadow: [0.54, 0.34], parts };
+  return { height: 0.81, head: 0.45, anim: 'squish', bust: { ty: 0.4, dist: 2.35 }, shadow: [0.54, 0.34], parts };
 }
 
 function goblin() {
   return {
-    height: 1.75, head: 1.32, anim: 'breathe', shadow: [0.5, 0.3],
+    height: 1.75, head: 1.32, anim: 'breathe', bust: { ty: 1.24, dist: 2.95 }, shadow: [0.5, 0.3],
     parts: [
       // legs planted wide with flat feet so it stands on the ground
       cone([0.2, 0.06, 0.02], [0.17, 0.5, 0], 0.12, 0.1, 'body', { sym: true }),
@@ -166,7 +166,7 @@ function goblin() {
 
 function troll() {
   return {
-    height: 2.05, head: 1.62, anim: 'breathe', shadow: [0.85, 0.45],
+    height: 2.05, head: 1.62, anim: 'breathe', bust: { ty: 1.62 * 0.82, dist: 2.05 * 1.55 + 1.1 }, shadow: [0.85, 0.45],
     parts: [
       cone([0.3, 0.02, 0], [0.3, 0.6, 0], 0.21, 0.19, 'body', { sym: true }),
       ell([0.33, 0.08, 0.13], [0.22, 0.1, 0.26], 'body', { sym: true }),
@@ -251,7 +251,7 @@ function dragon(elder) {
     bite(v(0.7, 1.45, -0.27), 0.12, 0.65, { ...wf, side: -1 }),
     bite(v(0.18, 1.42, 0.22), 0.12, 0.85),
   );
-  return { height: (elder ? 2.3 : 2.06), head: 1.62 * s, anim: 'flap', plates: true, shadow: [0.85, 0.55], parts };
+  return { height: (elder ? 2.3 : 2.06), head: 1.62 * s, anim: 'flap', plates: true, bust: { ty: 1.42, dist: 3.45 }, shadow: [0.85, 0.55], parts };
 }
 
 /** The elder dragon hovers in the air, wings spread high, looking down at you with fire in its jaws. */
@@ -308,13 +308,13 @@ function flyingDragon() {
     bite([-0.32, 1.95, 0.2], 0.15, 0.8),
     bite([0.34, 3.0, -0.12], 0.1, 0.9),
   ];
-  return { height: 3.25, head: 2.6, anim: 'fly', plates: true, flying: true, shadow: [0.9, 0.5], parts };
+  return { height: 3.25, head: 2.6, anim: 'fly', plates: true, flying: true, bust: { ty: 2.42, dist: 3.8 }, shadow: [0.9, 0.5], parts };
 }
 
 function castle() {
   const merlons = [-0.6, -0.3, 0, 0.3, 0.6].map((x) => box([x, 1.27, 0.25], [0.075, 0.07, 0.06], 'stone', { rad: 0.01 }));
   return {
-    height: 2.25, head: 1.3, anim: 'none', bricks: true, portrait: 'full', shadow: [1.2, 0.5], ruin: true,
+    height: 2.25, head: 1.3, anim: 'none', bricks: true, bust: { ty: 1.55, dist: 4.6 }, shadow: [1.2, 0.5], ruin: true,
     parts: [
       box([0, 0.6, 0], [0.75, 0.6, 0.3], 'stone'),
       cyl([0.86, 0.82, 0], 0.3, 0.82, 'stone', { sym: true }),
@@ -447,8 +447,9 @@ export function renderModel(type, temper = 'angry', opts = {}) {
   const H = model.height;
   const portrait = opts.framing === 'portrait';
   const stage = opts.framing === 'stage';
-  const target = stage ? [0, STAGE.ty, 0] : portrait ? [0, Math.max(model.head * 0.82, H * 0.5), 0] : [0, H * 0.48, 0];
-  const dist = stage ? STAGE.dist : portrait ? (model.flying ? H * 1.2 + 0.9 : H * 1.55 + 1.1) : H * 2.15 + 0.9;
+  // portraits: a 3/4 bust (head and upper body), framed per model by model.bust
+  const target = stage ? [0, STAGE.ty, 0] : portrait ? [0, model.bust.ty, 0] : [0, H * 0.48, 0];
+  const dist = stage ? STAGE.dist : portrait ? model.bust.dist : H * 2.15 + 0.9;
   const camY = stage ? STAGE.camY : target[1] + (portrait ? 0.2 : 0.35);
   const cam = [0, camY, dist];
   let fx = target[0] - cam[0], fy = target[1] - cam[1], fz = target[2] - cam[2];
@@ -666,7 +667,7 @@ export function renderPortrait(type, temper = 'angry', opts = {}) {
     }
   }
   // monster on top
-  const im = renderModel(type, temper, { w: inner, h: inner, yaw: opts.yaw ?? 0.32, framing: model.portrait || 'portrait', t: opts.t || 0.4, damage: opts.damage || 0 });
+  const im = renderModel(type, temper, { w: inner, h: inner, yaw: opts.yaw ?? 0.32, framing: 'portrait', t: opts.t || 0.4, damage: opts.damage || 0, shadow: false });
   for (let y = 0; y < inner; y++) {
     for (let x = 0; x < inner; x++) {
       const so = (y * inner + x) * 4, a = im.data[so + 3] / 255;
