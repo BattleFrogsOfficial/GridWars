@@ -22,7 +22,9 @@ It installs from the website ("Add to Home Screen") and works offline. All data 
 | Regenerating | Minimum payment ≤ a month of interest. The debt never shrinks on minimums alone |
 | Benched | Any debt (e.g. a mortgage) can be kept off the battlefield and out of the plan |
 | Quest plan | Month-by-month simulation, avalanche or snowball, minimums roll over when a debt dies |
-| Budget link | The budget's "Debt attack" limit minus minimums = extra per month in the plan. Debt payments count as Debt attack spending automatically |
+| Setup | Settings → Set up a new account: income sources, recurring bills, everyday spending, debts, goals, then a suggested split of what's left. Nothing is saved until Finish; the app starts empty |
+| Budget | Monthly income (any pay frequency) − fixed bills − debt minimums = left over, which you assign to budget lines. Expenses are tracked against those lines each month |
+| Budget link | The "Extra debt payments" line is the extra paid on top of minimums in the plan. Debt payments above the minimums count against it automatically |
 | Save | One JSON document in IndexedDB. Backup = download that JSON; restore validates it first |
 
 ## Files

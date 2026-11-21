@@ -11,7 +11,9 @@ import {
   DEBT_TYPES, ENTRY_KINDS, balancesById, speciesFor, temperFor, monthlyInterest, isRegenerating, pendingInterest,
 } from './debts.js';
 import { simulatePayoff, projectDebt, STRATEGIES } from './planner.js';
-import { monthSummary, CATEGORY_KINDS, DEBT_CATEGORY_ID } from './budget.js';
+import {
+  monthSummary, monthlyPlan, savedSoFar, suggestSplit, toMonthly, CATEGORY_KINDS, DEBT_CATEGORY_ID, OTHER_CATEGORY_ID, FREQUENCIES,
+} from './budget.js';
 import { XP, attackXp, levelInfo, streak } from './player.js';
 import { uid, emptyState } from './state.js';
 import { loadState, saveState, requestPersistence, downloadBackup, readBackup } from './storage.js';
@@ -92,10 +94,18 @@ function monsters() {
   });
 }
 
+/** Every debt still owed costs its minimum each month, benched ones (like a mortgage) included. */
+function debtMinsTotal() {
+  return monsters().filter((m) => m.alive).reduce((s, m) => s + m.minPayment, 0);
+}
+
+const summary = (ym) => monthSummary(state, ym, debtMinsTotal());
+
+/** The budget's "Extra debt payments" line is the extra paid on top of minimums in the plan. */
 function autoExtra(active) {
   const attack = state.categories.find((c) => c.id === DEBT_CATEGORY_ID)?.limit || 0;
   const mins = active.reduce((s, d) => s + d.minPayment, 0);
-  return { attack, mins, extra: Math.max(0, attack - mins) };
+  return { attack, mins, extra: attack };
 }
 
 function currentPlan() {
@@ -108,7 +118,7 @@ function currentPlan() {
   return { active, auto, extra, strategy, plan, baseline };
 }
 
-const hasAnyData = () => state.debts.length || state.incomes.length || state.expenses.length;
+const hasAnyData = () => state.debts.length || state.incomes.length || state.expenses.length || state.incomeSources.length || state.bills.length;
 
 // ---------- rendering helpers ----------
 
@@ -166,8 +176,8 @@ function planView() {
   const lv = levelInfo(state.player.xp);
   const history = [5, 4, 3, 2, 1, 0].map((k) => {
     const ym = addMonths(now, -k);
-    const m = monthSummary(state, ym);
-    return { ym, income: m.income, spent: m.spent };
+    const m = summary(ym);
+    return { ym, income: m.incomeTotal, spent: m.spent };
   });
   const histMax = Math.max(1, ...history.flatMap((h) => [h.income, h.spent]));
 
@@ -217,8 +227,8 @@ function planView() {
           <div><small>Extra / mo</small><b>${fmt(extra)}</b></div>
           <div><small>Total / mo</small><b>${fmt(plan.budget)}</b></div>
         </div>
-        <p class="hint">${state.settings.extraCents == null ? `Extra comes from your Debt attack budget (${fmt(auto.attack)}) minus minimums.` : 'Extra set by hand.'}</p>
-        ${auto.attack < auto.mins ? `<p class="bad">Your Debt attack budget is ${fmt(auto.mins - auto.attack)} short of the minimum payments. Raise it in Income &amp; budget.</p>` : ''}
+        <p class="hint">${state.settings.extraCents == null ? `Extra comes from the Extra debt payments line in your budget (${fmt(auto.attack)}).` : 'Extra set by hand.'}</p>
+        ${(() => { const lo = monthlyPlan(state, debtMinsTotal()).leftover; return state.incomeSources.length && lo < 0 ? `<p class="bad">Your bills and minimum payments are ${fmt(-lo)} more than your income each month.</p>` : ''; })()}
         <button class="btn" data-action="set-extra">Change extra</button>
       </section>
 
@@ -444,13 +454,13 @@ function openProjection(id) {
 // ---------- tab 2: spending ----------
 
 function spendView() {
-  const m = monthSummary(state, ui.month);
+  const m = summary(ui.month);
   const ms = monsters();
   const debtName = (id) => state.debts.find((d) => d.id === id)?.name || 'debt';
   const entries = [
     ...state.expenses.filter((e) => ymOf(e.date) === ui.month).map((e) => ({
       id: e.id, date: e.date, amount: e.amount, t: 'expense', sign: '−',
-      label: (state.categories.find((c) => c.id === e.categoryId)?.name || '?') + (e.note ? ` · ${e.note}` : ''),
+      label: catName(e.categoryId) + (e.note ? ` · ${e.note}` : ''),
     })),
     ...state.ledger.filter((e) => !e.auto && e.kind !== 'correction' && ymOf(e.date) === ui.month).map((e) => ({
       id: e.id, date: e.date, amount: Math.abs(e.amount), t: 'ledger', cls: e.kind === 'payment' ? 'attack' : 'charge',
@@ -458,7 +468,7 @@ function spendView() {
       label: `${e.kind === 'payment' ? 'Payment' : ENTRY_KINDS[e.kind].label}: ${debtName(e.debtId)}${e.note ? ` · ${e.note}` : ''}`,
     })),
   ].sort((a, b) => b.date.localeCompare(a.date));
-  const top = m.categories.filter((c) => c.spent > 0).sort((a, b) => b.spent - a.spent).slice(0, 3);
+  const top = [...m.categories, m.other].filter((c) => c.spent > 0).sort((a, b) => b.spent - a.spent).slice(0, 3);
   const live = ms.filter((d) => d.alive);
 
   return `
@@ -483,9 +493,9 @@ function spendView() {
     ${monthNav()}
     <section class="card">
       <div class="stats">
-        <div><small>Spent</small><b>${fmt(m.spent)}</b></div>
-        <div><small>Debt payments</small><b>${fmt(m.categories.find((c) => c.id === DEBT_CATEGORY_ID)?.spent || 0)}</b></div>
-        <div><small>Left</small><b class="${m.left < 0 ? 'bad' : ''}">${fmt(m.left)}</b></div>
+        <div><small>Logged spending</small><b>${fmt(m.expenses)}</b></div>
+        <div><small>Debt payments</small><b>${fmt(m.debtPaid)}</b></div>
+        <div><small>Left this month</small><b class="${m.left < 0 ? 'bad' : ''}">${fmt(m.left)}</b></div>
       </div>
       ${top.length ? `<p class="hint">Biggest: ${top.map((c) => `${esc(c.name)} ${fmt(c.spent)}`).join(' · ')}</p>` : ''}
     </section>
@@ -547,7 +557,7 @@ function battleView() {
       <section class="card empty-card">
         <p>${dead.length ? 'Every monster is defeated. Well fought!' : 'No monsters yet. Each debt you add appears here as a monster.'}</p>
         <div class="row-buttons"><button class="btn primary" data-action="add-debt">Add a debt</button>
-        ${hasAnyData() ? '' : '<button class="btn" data-action="example">Try example data</button>'}</div>
+        ${state.settings.setupDone ? '' : '<button class="btn" data-action="goto" data-tab="setup">Set up your account</button>'}</div>
       </section>`}
     ${benched.length ? `<h2 class="section-h">Benched</h2><p class="hint">Kept off the battlefield and out of the plan.</p>${benched.map(monsterCard).join('')}` : ''}
     ${dead.length ? `<h2 class="section-h">Trophies</h2>${dead.map(monsterCard).join('')}` : ''}`;
@@ -555,48 +565,105 @@ function battleView() {
 
 // ---------- tab 4: income & budget ----------
 
+const GOALS = {
+  payDebt: 'Pay off debt faster',
+  emergency: 'Build an emergency fund',
+  saveFor: 'Save up for something',
+  fun: 'Keep some money for fun',
+  spendLess: 'Spend less on everyday things',
+};
+
+function recurringRows(list) {
+  return state[list].map((r) => `
+    <li><button class="row-btn" data-action="edit-rec" data-list="${list}" data-id="${r.id}">
+      <span class="grow">${esc(r.name)}<small>${fmt(r.amount)} ${freqLabel(r.freq)}</small></span>
+      <b>${fmt(toMonthly(r.amount, r.freq))}<small>/mo</small></b><span class="chev" aria-hidden="true">›</span>
+    </button></li>`).join('');
+}
+
 function budgetView() {
-  const m = monthSummary(state, ui.month);
-  const incomes = state.incomes.filter((i) => ymOf(i.date) === ui.month).sort((a, b) => b.date.localeCompare(a.date));
-  const allZero = state.categories.every((c) => c.limit === 0);
-  const splitBase = m.income || state.settings.expectedIncome || 0;
+  if (!state.settings.setupDone && !state.incomeSources.length) {
+    return `
+      ${header('Income &amp; budget')}
+      <section class="card empty-card">
+        <p>Your budget is built from your income, bills and debts. Set up your account to fill it in.</p>
+        <button class="btn primary" data-action="goto" data-tab="setup">Go to setup</button>
+      </section>`;
+  }
+  const mins = debtMinsTotal();
+  const p = monthlyPlan(state, mins);
+  const m = summary(ui.month);
+  const alive = monsters().filter((x) => x.alive);
+  const hasDebtCat = state.categories.some((c) => c.id === DEBT_CATEGORY_ID);
+  const extras = state.incomes.filter((i) => ymOf(i.date) === ui.month).sort((a, b) => b.date.localeCompare(a.date));
+  const catRow = (c) => {
+    const saved = c.kind === 'savings' && c.target ? savedSoFar(state, c.id) : null;
+    return `
+      <li><button data-action="${c.id === OTHER_CATEGORY_ID ? 'add-cat' : 'edit-cat'}" data-id="${c.id}">
+        <span class="cat-top"><span>${esc(c.name)} <small>${c.id === OTHER_CATEGORY_ID ? 'not in your plan' : c.kind === 'debt' ? '' : CATEGORY_KINDS[c.kind]}</small></span><span>${fmt(c.spent)} / ${fmt(c.limit)}</span></span>
+        ${meter(c.spent, c.limit)}
+        ${saved != null ? `<small>Saved ${fmt(saved)} of ${fmt(c.target)} goal</small>${meter(Math.min(saved, c.target), c.target)}` : ''}
+      </button></li>`;
+  };
 
   return `
-    ${header('Income &amp; budget', 'Give every coin a job')}
-    ${monthNav()}
+    ${header('Income &amp; budget', 'What comes in, what goes out, where the rest goes')}
     <section class="card">
-      <div class="stats">
-        <div><small>Income</small><b>${fmt(m.income)}</b></div>
-        <div><small>Planned</small><b>${fmt(m.assigned)}</b></div>
-        <div><small>Unplanned</small><b class="${m.toAssign < 0 ? 'bad' : ''}">${fmt(m.toAssign)}</b></div>
-      </div>
-      <p class="${m.toAssign < 0 ? 'bad' : m.toAssign === 0 && m.income > 0 ? 'good' : ''}">
-        ${m.toAssign > 0 ? `${fmt(m.toAssign)} still needs a job.` : m.toAssign < 0 ? `You've planned ${fmt(-m.toAssign)} more than you earned.` : m.income > 0 ? 'Every coin has a job.' : 'Log your income to start planning.'}
-      </p>
-      <button class="btn primary wide" data-action="add-income">+ Income</button>
-    </section>
-
-    <section class="card">
-      <h2>Monthly limits</h2>
-      ${allZero && splitBase > 0 ? `<button class="btn wide" data-action="split-503020">Quick-fill 50/30/20</button>` : ''}
-      <ul class="cats">
-        ${m.categories.map((c) => `
-          <li><button data-action="edit-cat" data-id="${c.id}">
-            <span class="cat-top"><span>${esc(c.name)} <small>${CATEGORY_KINDS[c.kind]}</small></span><span>${fmt(c.spent)} / ${fmt(c.limit)}</span></span>
-            ${meter(c.spent, c.limit)}
-          </button></li>`).join('')}
+      <h2>Every month</h2>
+      <ul class="flow">
+        <li><span>Income</span><b>${fmt(p.income)}</b></li>
+        <li><span>Fixed bills</span><b>−${fmt(p.fixed)}</b></li>
+        <li><span>Debt minimum payments</span><b>−${fmt(p.debtMins)}</b></li>
+        <li class="flow-total"><span>Left over</span><b class="${p.leftover < 0 ? 'bad' : ''}">${fmt(p.leftover)}</b></li>
       </ul>
-      <button class="btn" data-action="add-cat">+ Category</button>
+      ${p.leftover < 0 ? `<p class="bad">Your bills and minimum payments are ${fmt(-p.leftover)} more than your income.</p>` : ''}
     </section>
 
     <section class="card">
-      <h2>Income this month</h2>
-      ${incomes.length ? `<ul class="log">${incomes.map((i) => `
+      <h2>Where the rest goes</h2>
+      <p class="assign ${p.unallocated < 0 ? 'bad' : p.unallocated === 0 ? 'good' : ''}">
+        ${p.unallocated > 0 ? `<b>${fmt(p.unallocated)}</b> still needs a job.` : p.unallocated < 0 ? `You've planned <b>${fmt(-p.unallocated)}</b> more than you have left.` : 'Every dollar has a job.'}
+        <small>${fmt(p.allocated)} of ${fmt(Math.max(0, p.leftover))} assigned</small>
+      </p>
+      <div class="row-buttons">
+        <button class="btn primary" data-action="add-cat">+ Add to budget</button>
+        ${alive.length && !hasDebtCat ? '<button class="btn" data-action="add-debt-cat">+ Extra debt payments</button>' : ''}
+      </div>
+      <h3>Spent so far</h3>
+      ${monthNav()}
+      ${m.categories.length || m.other.spent ? `<ul class="cats">${m.categories.map(catRow).join('')}${m.other.spent ? catRow(m.other) : ''}</ul>`
+        : '<p class="empty">Nothing planned yet. Add groceries, savings, fun money or anything else.</p>'}
+    </section>
+
+    <section class="card">
+      <h2>Income sources</h2>
+      ${state.incomeSources.length ? `<ul class="rows">${recurringRows('incomeSources')}</ul>` : '<p class="empty">No regular income yet.</p>'}
+      <button class="btn" data-action="add-rec" data-list="incomeSources">+ Income source</button>
+      <h3>Extra income in ${monthLabel(ui.month, { month: 'long' })}</h3>
+      ${extras.length ? `<ul class="log">${extras.map((i) => `
         <li class="income">
           <span class="grow">${esc(i.source || 'Income')}<small>${dayLabel(i.date)}</small></span>
           <b>+${fmt(i.amount)}</b>
           <button class="x" data-action="del-entry" data-t="income" data-id="${i.id}" aria-label="Delete">×</button>
-        </li>`).join('')}</ul>` : '<p class="empty">No income logged this month.</p>'}
+        </li>`).join('')}</ul>` : '<p class="hint">Bonuses, gifts or side jobs that only happen once.</p>'}
+      <button class="btn" data-action="add-income">+ Log extra income</button>
+    </section>
+
+    <section class="card">
+      <h2>Fixed bills</h2>
+      ${state.bills.length ? `<ul class="rows">${recurringRows('bills')}</ul>` : '<p class="empty">No recurring bills yet.</p>'}
+      <button class="btn" data-action="add-rec" data-list="bills">+ Bill</button>
+    </section>
+
+    <section class="card">
+      <h2>Debt minimum payments</h2>
+      ${alive.length ? `<ul class="rows">${alive.map((d) => `
+        <li><button class="row-btn" data-action="open-debt" data-id="${d.id}">
+          ${spriteCanvas(d.species.key, d.temper.key, 2)}
+          <span class="grow">${esc(d.name)}<small>${fmt(d.balance)} owed</small></span>
+          <b>${fmt(d.minPayment)}<small>/mo</small></b>
+        </button></li>`).join('')}</ul>` : '<p class="empty">No debts.</p>'}
+      <p class="hint">Add or change debts on the Spending tab.</p>
     </section>`;
 }
 
@@ -606,20 +673,27 @@ const CURRENCIES = ['USD', 'CAD', 'EUR', 'GBP', 'AUD', 'NZD', 'MXN', 'BRL', 'INR
 
 function setupView() {
   const done = state.settings.setupDone;
+  const goals = Object.entries(GOALS).filter(([k]) => state.goals[k]);
   return `
     ${header('Settings')}
     <section class="card ${done ? '' : 'tip'}">
-      <h2>${done ? 'Setup' : 'Welcome!'}</h2>
-      <p>${done ? 'Run the guided setup again to update your income, debts and budget.' : 'Answer a few questions to set up your income, debts and budget. It takes about two minutes.'}</p>
-      <button class="btn ${done ? '' : 'primary'} wide" data-action="setup">${done ? 'Run setup again' : 'Start setup'}</button>
-      ${hasAnyData() ? '' : '<button class="btn wide" data-action="example">Or try example data</button>'}
+      <h2>${done ? 'Your account' : 'Get started'}</h2>
+      ${done
+        ? `<p>Set up in ${monthLabel(state.settings.startMonth || ymOf(todayISO()))}: ${state.incomeSources.length} income source${state.incomeSources.length === 1 ? '' : 's'}, ${state.bills.length} bill${state.bills.length === 1 ? '' : 's'}, ${state.debts.length} debt${state.debts.length === 1 ? '' : 's'}.</p>`
+        : '<p>Everything starts empty. Set up your account to add your income, bills, debts and goals. It takes a few minutes, and nothing is saved until you finish.</p>'}
+      <button class="btn ${done ? '' : 'primary'} wide" data-action="new-account">Set up a new account</button>
+      ${done ? '<p class="hint">A new account replaces everything. To change one thing, edit it on the Budget or Spending tab.</p>' : ''}
     </section>
+    ${done ? `
+      <section class="card">
+        <h2>Your goals</h2>
+        ${goals.length ? `<ul class="goal-list">${goals.map(([, l]) => `<li>${l}</li>`).join('')}</ul>` : '<p class="empty">No goals picked.</p>'}
+        <button class="btn" data-action="edit-goals">Change goals</button>
+      </section>` : ''}
     <section class="card">
       <h2>Basics</h2>
       <div class="field"><label for="set-currency">Currency</label>
         <select id="set-currency" data-change="currency">${CURRENCIES.map((c) => `<option ${c === state.settings.currency ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
-      <div class="field"><span class="label">Usual monthly income</span>
-        <button class="btn wide" data-action="set-expected">${state.settings.expectedIncome ? fmt(state.settings.expectedIncome) : 'Not set'}</button></div>
     </section>
     <section class="card">
       <h2>Backup</h2>
@@ -679,7 +753,8 @@ function render() {
 const debtTypeOptions = DEBT_TYPES.map((t) => ({ value: t.key, label: t.label }));
 const liveDebtOptions = () => monsters().filter((m) => m.alive).map((m) => ({ value: m.id, label: `${m.name} (${fmt(m.balance)})` }));
 
-function addDebt(onDone) {
+/** With `draft` (an array), the new debt is added to it instead of saved: used by account setup. */
+function addDebt(onDone, draft = null) {
   openForm({
     title: 'New debt',
     intro: 'Enter it as it is today. It becomes a monster: bigger balance, bigger monster; higher interest, angrier color.',
@@ -696,13 +771,15 @@ function addDebt(onDone) {
     submitLabel: 'Add debt',
     onSubmit: (v) => {
       const today = todayISO();
-      commit((s) => {
-        s.debts.push({
-          id: uid(), name: v.name, type: v.type, startBalance: v.balance, apr: v.apr, minPayment: v.minPayment,
-          dueDay: v.dueDay, include: v.include, autoInterest: v.autoInterest, createdAt: today, accruedThrough: today, killRewarded: false,
-        });
-      });
-      toast(`${v.name} has appeared on the battleground!`);
+      const debt = {
+        id: uid(), name: v.name, type: v.type, startBalance: v.balance, apr: v.apr, minPayment: v.minPayment,
+        dueDay: v.dueDay, include: v.include, autoInterest: v.autoInterest, createdAt: today, accruedThrough: today, killRewarded: false,
+      };
+      if (draft) draft.push(debt);
+      else {
+        commit((s) => s.debts.push(debt));
+        toast(`${v.name} has appeared on the battleground!`);
+      }
       if (onDone) setTimeout(onDone, 0);
     },
   });
@@ -872,13 +949,18 @@ function openDebt(id, hit = 0) {
 
 // ---------- spending & income ----------
 
-function addIncome(onDone) {
-  const sources = [...new Set(state.incomes.map((i) => i.source).filter(Boolean))];
+const FREQ_OPTIONS = Object.entries(FREQUENCIES).map(([value, f]) => ({ value, label: f.label }));
+const freqLabel = (f) => FREQUENCIES[f]?.label || '';
+const catName = (id) => (id === OTHER_CATEGORY_ID ? 'Unplanned' : state.categories.find((c) => c.id === id)?.name || '?');
+
+/** One-off income for a single month. Regular pay lives in income sources. */
+function addIncome() {
   openForm({
-    title: 'Log income',
+    title: 'Log extra income',
+    intro: 'A one-off amount, like a bonus, a gift or a side job. Your regular pay is set under Income sources.',
     fields: [
-      { name: 'amount', label: 'Amount', type: 'money', required: true, positive: true, value: state.settings.expectedIncome || '' },
-      { name: 'source', label: 'Source', type: 'text', value: sources.at(-1) || '', placeholder: 'e.g. Paycheck' },
+      { name: 'amount', label: 'Amount', type: 'money', required: true, positive: true },
+      { name: 'source', label: 'What was it?', type: 'text', placeholder: 'e.g. Bonus' },
       { name: 'date', label: 'Date', type: 'date', value: todayISO() },
     ],
     onSubmit: (v) => {
@@ -888,19 +970,21 @@ function addIncome(onDone) {
         gainXp(XP.log);
       });
       toast(`+${fmt(v.amount)} gold. +${XP.log} XP`, 'good');
-      if (onDone) setTimeout(onDone, 0);
     },
   });
 }
 
 function addExpense() {
-  const cats = state.categories.filter((c) => c.kind !== 'debt');
+  const options = [
+    ...state.categories.filter((c) => c.kind !== 'debt').map((c) => ({ value: c.id, label: c.kind === 'savings' ? `${c.name} (savings)` : c.name })),
+    { value: OTHER_CATEGORY_ID, label: 'Unplanned / other' },
+  ];
   openForm({
     title: 'Log expense',
-    intro: 'For debt payments use “+ Debt payment” so the monster takes the damage.',
+    intro: 'Pick the budget line it comes from. Money you put into savings counts here too. For debt payments use “+ Debt payment”.',
     fields: [
       { name: 'amount', label: 'Amount', type: 'money', required: true, positive: true },
-      { name: 'categoryId', label: 'Category', type: 'select', options: cats.map((c) => ({ value: c.id, label: c.name })), value: cats[0]?.id },
+      { name: 'categoryId', label: 'Budget line', type: 'select', options, value: options[0].value },
       { name: 'note', label: 'Note (optional)', type: 'text' },
       { name: 'date', label: 'Date', type: 'date', value: todayISO() },
     ],
@@ -910,160 +994,373 @@ function addExpense() {
         markActive();
         gainXp(XP.log);
       });
-      const cat = monthSummary(state, ymOf(v.date)).categories.find((c) => c.id === v.categoryId);
-      const over = cat.limit > 0 && cat.remaining < 0;
+      const cat = summary(ymOf(v.date)).categories.find((c) => c.id === v.categoryId);
+      const over = cat && cat.limit > 0 && cat.remaining < 0;
       toast(over ? `${cat.name} is over budget by ${fmt(-cat.remaining)}` : `Logged. +${XP.log} XP`, over ? 'bad' : '');
     },
   });
 }
 
-function categoryForm(c) {
+/** Add or edit a budget line (an allocation of what's left over). */
+function categoryForm(c, preset = {}) {
   const isNew = !c;
-  const isDebt = c?.id === DEBT_CATEGORY_ID;
+  const isDebt = (c?.id ?? preset.id) === DEBT_CATEGORY_ID;
+  const plan = monthlyPlan(state, debtMinsTotal());
+  const free = plan.unallocated + (c?.limit || 0);
   openForm({
-    title: isNew ? 'New category' : `Edit ${c.name}`,
-    intro: isDebt ? 'The total you plan to put toward debts each month. Anything above the minimums becomes extra damage in your plan.' : '',
+    title: isNew ? (isDebt ? 'Extra debt payments' : 'Add to your budget') : `Edit ${c.name}`,
+    intro: `${isDebt ? 'Money on top of your minimum payments each month. It becomes extra damage on your debts in your plan. ' : ''}You have <b>${fmt(free)}</b> a month not yet assigned.`,
     fields: [
-      { name: 'name', label: 'Name', type: 'text', required: true, value: c?.name || '' },
+      { name: 'name', label: 'Name', type: 'text', required: true, value: c?.name || preset.name || '', placeholder: 'e.g. Groceries' },
       ...(isDebt ? [] : [{
-        name: 'kind', label: 'Kind', type: 'select', value: c?.kind || 'need',
+        name: 'kind', label: 'Type', type: 'select', value: c?.kind || preset.kind || 'need',
         options: Object.entries(CATEGORY_KINDS).filter(([k]) => k !== 'debt').map(([value, label]) => ({ value, label })),
       }]),
-      { name: 'limit', label: 'Monthly limit', type: 'money', required: true, value: c?.limit ?? 0 },
+      { name: 'limit', label: 'Amount per month', type: 'money', required: true, value: c?.limit ?? '' },
+      ...(isDebt ? [] : [{
+        name: 'target', label: 'Savings goal total (optional)', type: 'money', value: c?.target ?? '',
+        hint: 'For savings: the total you want to reach. Log money you set aside as an expense on this line to track progress.',
+      }]),
     ],
-    extra: isNew || isDebt ? [] : [{ label: 'Delete', action: 'delete', className: 'bad' }],
+    extra: isNew ? [] : [{ label: 'Delete', action: 'delete', className: 'bad' }],
     onExtra: (action, close) => {
-      const used = state.expenses.filter((e) => e.categoryId === c.id).length;
-      askConfirm(used ? `Delete ${c.name} and its ${used} logged expense(s)?` : `Delete ${c.name}?`, { okLabel: 'Delete', danger: true }).then((ok) => {
+      askConfirm(`Remove ${c.name} from your budget? Anything already logged to it moves to Unplanned.`, { okLabel: 'Remove', danger: true }).then((ok) => {
         if (!ok) return;
         close();
         commit((s) => {
           s.categories = s.categories.filter((x) => x.id !== c.id);
-          s.expenses = s.expenses.filter((e) => e.categoryId !== c.id);
+          for (const e of s.expenses) if (e.categoryId === c.id) e.categoryId = OTHER_CATEGORY_ID;
         });
       });
     },
     onSubmit: (v) => {
+      const fields = { name: v.name, kind: isDebt ? 'debt' : v.kind, limit: v.limit, target: isDebt ? null : v.target || null };
       commit((s) => {
-        if (isNew) s.categories.splice(s.categories.length - 1, 0, { id: uid(), name: v.name, kind: v.kind, limit: v.limit });
-        else Object.assign(s.categories.find((x) => x.id === c.id), v);
+        if (isNew) s.categories.push({ id: isDebt ? DEBT_CATEGORY_ID : uid(), ...fields });
+        else Object.assign(s.categories.find((x) => x.id === c.id), fields);
       });
     },
   });
 }
 
-function apply503020(s, income) {
-  const groups = [
-    [s.categories.filter((c) => c.kind === 'need'), 0.5],
-    [s.categories.filter((c) => c.kind === 'want'), 0.3],
-    [s.categories.filter((c) => c.kind === 'savings' || c.kind === 'debt'), 0.2],
-  ];
-  for (const [cats, share] of groups) {
-    if (!cats.length) continue;
-    const total = Math.round(income * share);
-    const each = Math.floor(total / cats.length);
-    cats.forEach((c, i) => (c.limit = each + (i === 0 ? total - each * cats.length : 0)));
-  }
-}
-
-async function split503020() {
-  const income = monthSummary(state, ui.month).income || state.settings.expectedIncome || 0;
-  const ok = await askConfirm(`Split ${fmt(income)} as 50% needs, 30% wants, 20% savings & debt? You can adjust each one after.`, { okLabel: 'Split it', title: 'Quick-fill budget' });
-  if (ok) commit((s) => apply503020(s, income));
-}
-
-// ---------- first-run setup ----------
-
-function runSetup() {
+/** Add or edit a recurring income source or fixed bill. */
+function recurringForm(list, item = null) {
+  const isIncome = list === 'incomeSources';
   openForm({
-    title: 'Setup 1 of 3: Income',
-    intro: 'What do you usually take home each month, after tax?',
+    title: item ? `Edit ${item.name}` : isIncome ? 'Add an income source' : 'Add a recurring bill',
+    intro: isIncome
+      ? 'Regular take-home pay, after tax.'
+      : 'Something you pay again and again that never gets paid off: rent, a lease, insurance, a subscription. Loans and cards are debts instead.',
     fields: [
-      { name: 'currency', label: 'Currency', type: 'select', options: CURRENCIES.map((c) => ({ value: c, label: c })), value: state.settings.currency },
-      { name: 'income', label: 'Monthly take-home pay', type: 'money', value: state.settings.expectedIncome ?? '' },
-      {
-        name: 'logIt', label: `Log it as ${monthLabel(ymOf(todayISO()), { month: 'long' })}'s income`, type: 'checkbox',
-        value: !state.incomes.some((i) => ymOf(i.date) === ymOf(todayISO())),
-      },
+      { name: 'name', label: 'Name', type: 'text', required: true, value: item?.name || '', placeholder: isIncome ? 'e.g. Paycheck' : 'e.g. Rent' },
+      { name: 'amount', label: 'Amount', type: 'money', required: true, positive: true, value: item?.amount ?? '' },
+      { name: 'freq', label: 'How often', type: 'select', options: FREQ_OPTIONS, value: item?.freq || (isIncome ? 'weekly' : 'monthly') },
     ],
-    submitLabel: 'Next',
+    extra: item ? [{ label: 'Delete', action: 'delete', className: 'bad' }] : [],
+    onExtra: (_a, close) => {
+      askConfirm(`Delete ${item.name}?`, { okLabel: 'Delete', danger: true }).then((ok) => {
+        if (!ok) return;
+        close();
+        commit((s) => (s[list] = s[list].filter((x) => x.id !== item.id)));
+      });
+    },
     onSubmit: (v) => {
       commit((s) => {
-        s.settings.currency = v.currency;
-        s.settings.expectedIncome = v.income || null;
-        if (v.income && v.logIt) s.incomes.push({ id: uid(), amount: v.income, source: 'Paycheck', date: todayISO(), note: '' });
+        if (item) Object.assign(s[list].find((x) => x.id === item.id), v);
+        else s[list].push({ id: uid(), ...v });
       });
-      setTimeout(setupDebts, 0);
     },
   });
 }
 
-function setupDebts() {
-  const n = state.debts.length;
-  const sheet = openSheet(`
-    <h2>Setup 2 of 3: Debts</h2>
-    <p>${n ? `You have ${n} debt${n === 1 ? '' : 's'} so far.` : 'Add each credit card, loan or bill you owe on. Each one becomes a monster.'}</p>
-    <p class="hint">Mortgages are optional. You can add one and uncheck “Fight this debt” to keep it off the battleground.</p>
-    <div class="row-buttons">
-      <button class="btn" data-action="next">${n ? 'Done with debts' : 'I have no debts'}</button>
-      <button class="btn primary" data-action="add">${n ? 'Add another' : 'Add a debt'}</button>
-    </div>`, {
-    onAction: (a, _el, { close }) => {
-      close();
-      if (a === 'add') addDebt(setupDebts);
-      if (a === 'next') setupBudget();
-    },
+function editGoals() {
+  openForm({
+    title: 'Your goals',
+    intro: 'Add budget lines for new goals on the Budget tab.',
+    fields: Object.entries(GOALS).map(([k, label]) => ({ name: k, label, type: 'checkbox', value: state.goals[k] })),
+    onSubmit: (v) => commit((s) => (s.goals = { ...s.goals, ...v })),
   });
-  return sheet;
 }
 
-async function setupBudget() {
-  const income = state.settings.expectedIncome;
-  if (income) {
+// ---------- new account setup ----------
+
+const BILL_PRESETS = ['Rent', 'Car lease', 'Car insurance', 'Utilities (power, water, gas)', 'Phone & internet', 'Health insurance', 'Subscriptions & memberships', 'Childcare'];
+const EVERYDAY_PRESETS = [['Groceries', 'weekly'], ['Gas & transport', 'weekly']];
+const WIZ_STEPS = ['Income', 'Bills', 'Debts', 'Goals', 'Summary'];
+
+async function startNewAccount() {
+  if (state.settings.setupDone || hasAnyData()) {
     const ok = await askConfirm(
-      `Start your budget with the 50/30/20 rule? ${fmt(Math.round(income * 0.5))} for needs, ${fmt(Math.round(income * 0.3))} for wants, ${fmt(Math.round(income * 0.2))} for savings and paying off debt. You can change every limit later.`,
-      { title: 'Setup 3 of 3: Budget', okLabel: 'Use 50/30/20', cancelLabel: "I'll set it myself" },
+      'A new account replaces everything on this device: debts, budget, history and level. Download a backup first if you might want it.',
+      { title: 'Start a new account?', okLabel: 'Start over', danger: true },
     );
-    if (ok) commit((s) => apply503020(s, income));
+    if (!ok) return;
   }
-  commit((s) => (s.settings.setupDone = true));
-  toast('Setup complete. To battle!', 'good');
-  go('battle');
+  runWizard();
 }
 
-// ---------- example data ----------
+function runWizard() {
+  const row = (name = '', freq = 'monthly') => ({ name, raw: '', freq });
+  const d = {
+    currency: state.settings.currency,
+    income: [row('Paycheck', 'weekly')],
+    bills: BILL_PRESETS.map((n) => row(n)),
+    everyday: EVERYDAY_PRESETS.map(([n, f]) => row(n, f)),
+    debts: [],
+    goals: { payDebt: true, emergency: true, saveFor: false, fun: true, spendLess: false },
+    emergencyRaw: '',
+    saveForName: '',
+    saveForRaw: '',
+    alloc: [],
+  };
+  let step = 0;
+  // Blank means 0; anything else must parse. Returns null for invalid input.
+  const amt = (raw) => (String(raw).trim() === '' ? 0 : parseMoney(raw));
+  const monthlyOf = (rows) => rows.reduce((s, r) => s + toMonthly(Math.max(0, amt(r.raw) || 0), r.freq), 0);
+  const money = (c) => formatMoney(c, d.currency);
+  const totals = () => {
+    const income = monthlyOf(d.income);
+    const bills = monthlyOf(d.bills);
+    const everyday = monthlyOf(d.everyday);
+    const mins = d.debts.reduce((s, x) => s + x.minPayment, 0);
+    return { income, bills, everyday, mins, leftover: income - bills - everyday - mins };
+  };
 
-function exampleState() {
-  const s = emptyState();
-  const today = todayISO();
-  const ym = ymOf(today);
-  const debt = (name, type, bal, apr, min, dueDay, include = true) => ({
-    id: uid(), name, type, startBalance: bal, apr, minPayment: min, dueDay, include, autoInterest: true,
-    createdAt: today, accruedThrough: today, killRewarded: false,
-  });
-  s.settings.setupDone = true;
-  s.settings.expectedIncome = 350000;
-  s.debts = [
-    debt('Example: Visa', 'credit', 420000, 24.99, 9500, 15),
-    debt('Example: Store card', 'credit', 100000, 29.99, 2000, 5),
-    debt('Example: Car loan', 'car', 1450000, 6.9, 31000, 20),
-    debt('Example: Dentist', 'medical', 32000, 0, 4000, 1),
-    debt('Example: Mortgage', 'mortgage', 25000000, 6.5, 160000, 1, false),
-  ];
-  const limits = { housing: 120000, food: 45000, transport: 20000, utilities: 25000, fun: 20000, savings: 20000, 'debt-attack': 80000 };
-  for (const c of s.categories) c.limit = limits[c.id] ?? 0;
-  // A few past months so the history chart has something to show.
-  for (let k = 0; k < 4; k++) {
-    const m = addMonths(ym, -k);
-    s.incomes.push({ id: uid(), amount: 175000, source: 'Example paycheck', date: `${m}-01`, note: '' });
-    if (k > 0) s.incomes.push({ id: uid(), amount: 175000, source: 'Example paycheck', date: `${m}-15`, note: '' });
-    s.expenses.push({ id: uid(), amount: 120000, categoryId: 'housing', date: `${m}-01`, note: 'Rent' });
-    s.expenses.push({ id: uid(), amount: 30000 + k * 4100, categoryId: 'food', date: `${m}-02`, note: 'Groceries' });
-    s.expenses.push({ id: uid(), amount: 4500 + k * 900, categoryId: 'transport', date: `${m}-03`, note: 'Gas' });
-    if (k > 0) s.expenses.push({ id: uid(), amount: 15000 + k * 2500, categoryId: 'fun', date: `${m}-12`, note: 'Going out' });
+  const rowsHtml = (list) => `
+    <div class="wrows">${d[list].map((r, i) => `
+      <div class="wrow">
+        <input class="wname" data-list="${list}" data-i="${i}" data-f="name" value="${esc(r.name)}" maxlength="40" aria-label="Name" placeholder="Name">
+        <button class="x" data-action="del-row" data-list="${list}" data-i="${i}" aria-label="Remove ${esc(r.name)}">×</button>
+        <input class="wamt" data-list="${list}" data-i="${i}" data-f="raw" value="${esc(r.raw)}" inputmode="decimal" autocomplete="off" placeholder="0.00" aria-label="${esc(r.name || 'Amount')} amount">
+        <select data-list="${list}" data-i="${i}" data-f="freq" aria-label="How often">${FREQ_OPTIONS.map((o) => `<option value="${o.value}" ${o.value === r.freq ? 'selected' : ''}>${o.label}</option>`).join('')}</select>
+      </div>`).join('')}
+    </div>`;
+
+  const goalBox = (k, extra = '') => `
+    <div class="goal ${d.goals[k] ? 'on' : ''}">
+      <label class="check"><input type="checkbox" data-g="${k}" ${d.goals[k] ? 'checked' : ''}> <span>${GOALS[k]}</span></label>
+      ${d.goals[k] ? extra : ''}
+    </div>`;
+
+  function buildAlloc() {
+    const t = totals();
+    const keys = [];
+    if (d.goals.payDebt && d.debts.length) keys.push('debt');
+    if (d.goals.emergency) keys.push('emergency');
+    if (d.goals.saveFor) keys.push('saveFor');
+    if (d.goals.fun) keys.push('fun');
+    const split = suggestSplit(t.leftover, keys);
+    const names = { debt: 'Extra debt payments', emergency: 'Emergency fund', saveFor: d.saveForName.trim() || 'Savings goal', fun: 'Fun money' };
+    d.alloc = keys.map((k) => ({ k, name: names[k], raw: centsToInput(split[k]) }));
   }
-  s.ledger = [{ id: uid(), debtId: s.debts[3].id, kind: 'payment', amount: -4000, date: `${ym}-01`, note: '', auto: false }];
-  return s;
+
+  function stepHtml() {
+    const t = totals();
+    switch (WIZ_STEPS[step]) {
+      case 'Income':
+        return `
+          <h2>How much do you make?</h2>
+          <p class="intro">Your take-home pay after tax. Add each job or regular source of income.</p>
+          <div class="field"><label for="wiz-currency">Currency</label>
+            <select id="wiz-currency" data-field="currency">${CURRENCIES.map((c) => `<option ${c === d.currency ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
+          ${rowsHtml('income')}
+          <button class="btn" data-action="add-row" data-list="income">+ Add another income</button>
+          <p class="wiz-total">About <b data-total="income">${money(t.income)}</b> a month.</p>`;
+      case 'Bills':
+        return `
+          <h2>What do you pay regularly?</h2>
+          <p class="intro">Costs that repeat and never get paid off. Fill in what you pay and leave the rest blank. Loans, cards and mortgages come next.</p>
+          ${rowsHtml('bills')}
+          <button class="btn" data-action="add-row" data-list="bills">+ Add another bill</button>
+          <h3>Everyday spending</h3>
+          <p class="hint">Roughly what you spend on these. They become budget lines you can track. Optional.</p>
+          ${rowsHtml('everyday')}
+          <button class="btn" data-action="add-row" data-list="everyday">+ Add another</button>
+          <p class="wiz-total">Bills about <b data-total="bills">${money(t.bills)}</b> and everyday spending about <b data-total="everyday">${money(t.everyday)}</b> a month.</p>`;
+      case 'Debts':
+        return `
+          <h2>What do you owe?</h2>
+          <p class="intro">Student loans, credit cards, car loans, medical bills, a mortgage. Each one becomes a monster to defeat.</p>
+          ${d.debts.length ? `<ul class="rows">${d.debts.map((x, i) => `
+            <li><span class="grow">${esc(x.name)}<small>${money(x.startBalance)} · ${x.apr}% APR${x.include ? '' : ' · benched'}</small></span>
+              <b>${money(x.minPayment)}<small>/mo</small></b>
+              <button class="x" data-action="del-debt" data-i="${i}" aria-label="Remove ${esc(x.name)}">×</button></li>`).join('')}</ul>`
+            : '<p class="empty">No debts added. If you have none, tap Next.</p>'}
+          <button class="btn primary wide" data-action="wiz-add-debt">+ Add a debt</button>
+          <p class="hint">A mortgage is optional. Add it and uncheck “Fight this debt” to keep it off the battleground; its payment still counts in your budget.</p>
+          ${d.debts.length ? `<p class="wiz-total">Minimum payments: <b>${money(t.mins)}</b> a month.</p>` : ''}`;
+      case 'Goals':
+        return `
+          <h2>What are your goals?</h2>
+          <p class="intro">Pick any. They decide how the money left over is split in the next step.</p>
+          ${goalBox('payDebt', d.debts.length ? '' : '<p class="hint">You haven\'t added any debts, so this will be skipped.</p>')}
+          ${goalBox('emergency', `<div class="field"><label for="wiz-em">Target (optional)</label>
+            <input id="wiz-em" data-field="emergencyRaw" value="${esc(d.emergencyRaw)}" inputmode="decimal" placeholder="${centsToInput(Math.round((t.bills + t.everyday + t.mins) * 3 / 100) * 100)}"></div>
+            <p class="hint">Many people aim for 3 months of costs, about ${money(Math.round((t.bills + t.everyday + t.mins) * 3))}.</p>`)}
+          ${goalBox('saveFor', `<div class="field-row">
+            <div class="field"><label for="wiz-sf-name">For what?</label><input id="wiz-sf-name" data-field="saveForName" value="${esc(d.saveForName)}" maxlength="40" placeholder="e.g. Vacation"></div>
+            <div class="field"><label for="wiz-sf">Target</label><input id="wiz-sf" data-field="saveForRaw" value="${esc(d.saveForRaw)}" inputmode="decimal" placeholder="0.00"></div></div>`)}
+          ${goalBox('fun')}
+          ${goalBox('spendLess', '<p class="hint">Your everyday budget lines will show when you go over.</p>')}`;
+      default: {
+        const assigned = d.alloc.reduce((s, a) => s + Math.max(0, amt(a.raw) || 0), 0);
+        return `
+          <h2>Your month</h2>
+          <ul class="flow">
+            <li><span>Income</span><b>${money(t.income)}</b></li>
+            <li><span>Fixed bills</span><b>−${money(t.bills)}</b></li>
+            <li><span>Debt minimum payments</span><b>−${money(t.mins)}</b></li>
+            <li><span>Everyday spending</span><b>−${money(t.everyday)}</b></li>
+            <li class="flow-total"><span>Left over</span><b class="${t.leftover < 0 ? 'bad' : ''}">${money(t.leftover)}</b></li>
+          </ul>
+          ${t.leftover < 0
+            ? `<p class="bad">You're spending ${money(-t.leftover)} more than you make each month. Finish setup, then look for bills or spending to cut on the Budget tab.</p>`
+            : d.alloc.length ? `
+              <h3>Put the rest to work</h3>
+              <p class="hint">A starting split based on your goals. Change any amount; you can add more lines later.</p>
+              <div class="wrows">${d.alloc.map((a, i) => `
+                <div class="arow"><label for="wiz-a${i}">${esc(a.name)}</label>
+                  <input id="wiz-a${i}" data-alloc="${i}" value="${esc(a.raw)}" inputmode="decimal" autocomplete="off"><small>/mo</small></div>`).join('')}
+              </div>
+              <p class="wiz-total">Still unassigned: <b data-total="unassigned" class="${t.leftover - assigned < 0 ? 'bad' : ''}">${money(t.leftover - assigned)}</b></p>`
+            : '<p class="hint">No goals picked, so the whole amount is yours to assign on the Budget tab.</p>'}`;
+      }
+    }
+  }
+
+  const sheet = openSheet('<div class="wiz"></div>', { className: 'wizard', onAction });
+  const el = sheet.el;
+  const box = el.querySelector('.wiz');
+
+  function render() {
+    box.innerHTML = `
+      <ol class="wiz-progress" aria-label="Setup progress">${WIZ_STEPS.map((s, i) => `<li class="${i < step ? 'done' : i === step ? 'on' : ''}">${s}</li>`).join('')}</ol>
+      <p class="wiz-step">Step ${step + 1} of ${WIZ_STEPS.length}</p>
+      ${stepHtml()}
+      <p class="form-error" role="alert"></p>
+      <div class="row-buttons wiz-nav">
+        ${step > 0 ? '<button class="btn" data-action="back">Back</button>' : ''}
+        <button class="btn primary" data-action="${step === WIZ_STEPS.length - 1 ? 'finish' : 'next'}">${step === WIZ_STEPS.length - 1 ? 'Finish setup' : 'Next'}</button>
+      </div>`;
+    el.scrollTop = 0;
+  }
+
+  function updateTotals() {
+    const t = totals();
+    const set = (k, v, bad) => {
+      const b = box.querySelector(`[data-total="${k}"]`);
+      if (b) {
+        b.textContent = money(v);
+        b.classList.toggle('bad', !!bad);
+      }
+    };
+    set('income', t.income);
+    set('bills', t.bills);
+    set('everyday', t.everyday);
+    const assigned = d.alloc.reduce((s, a) => s + Math.max(0, amt(a.raw) || 0), 0);
+    set('unassigned', t.leftover - assigned, t.leftover - assigned < 0);
+  }
+
+  function validate() {
+    const badRow = (list) => d[list].find((r) => amt(r.raw) == null || amt(r.raw) < 0);
+    const step0 = WIZ_STEPS[step];
+    if (step0 === 'Income') {
+      const bad = badRow('income');
+      if (bad) return `Check the amount for ${bad.name || 'an income'}.`;
+      if (!d.income.some((r) => amt(r.raw) > 0)) return 'Enter at least one income amount.';
+    }
+    if (step0 === 'Bills') {
+      const bad = badRow('bills') || badRow('everyday');
+      if (bad) return `Check the amount for ${bad.name || 'a bill'}.`;
+    }
+    if (step0 === 'Goals') {
+      if (d.goals.saveFor && !d.saveForName.trim()) return 'Say what you are saving for, or untick that goal.';
+      if (amt(d.emergencyRaw) == null || amt(d.saveForRaw) == null) return 'Check the target amounts.';
+    }
+    if (step0 === 'Summary' && d.alloc.some((a) => amt(a.raw) == null || amt(a.raw) < 0)) return 'Check the amounts you assigned.';
+    return '';
+  }
+
+  function finish() {
+    const today = todayISO();
+    const s = emptyState();
+    s.settings.currency = d.currency;
+    s.settings.setupDone = true;
+    s.settings.startMonth = ymOf(today);
+    s.goals = { ...d.goals };
+    const recurring = (rows, fallback) => rows
+      .filter((r) => amt(r.raw) > 0)
+      .map((r) => ({ id: uid(), name: r.name.trim() || fallback, amount: amt(r.raw), freq: r.freq }));
+    s.incomeSources = recurring(d.income, 'Income');
+    s.bills = recurring(d.bills, 'Bill');
+    s.debts = d.debts.map((x) => ({ ...x, createdAt: today, accruedThrough: today }));
+    s.categories = recurring(d.everyday, 'Everyday').map((r) => ({ id: r.id, name: r.name, kind: 'need', limit: toMonthly(r.amount, r.freq), target: null }));
+    for (const a of d.alloc) {
+      const limit = Math.max(0, amt(a.raw) || 0);
+      if (a.k === 'debt') s.categories.push({ id: DEBT_CATEGORY_ID, name: a.name, kind: 'debt', limit, target: null });
+      if (a.k === 'emergency') s.categories.push({ id: uid(), name: a.name, kind: 'savings', limit, target: amt(d.emergencyRaw) || null });
+      if (a.k === 'saveFor') s.categories.push({ id: uid(), name: a.name, kind: 'savings', limit, target: amt(d.saveForRaw) || null });
+      if (a.k === 'fun') s.categories.push({ id: uid(), name: a.name, kind: 'want', limit, target: null });
+    }
+    state = s;
+    save();
+    sheet.close();
+    ui.month = ymOf(today);
+    go('budget');
+    toast('Account set up! Here is your month.', 'good');
+  }
+
+  function onAction(action, btn) {
+    const list = btn.dataset.list;
+    const i = Number(btn.dataset.i);
+    if (action === 'add-row') {
+      d[list].push(row('', list === 'income' ? 'weekly' : list === 'everyday' ? 'weekly' : 'monthly'));
+      render();
+      box.querySelectorAll(`.wname[data-list="${list}"]`)[d[list].length - 1]?.focus();
+      return;
+    }
+    if (action === 'del-row') {
+      d[list].splice(i, 1);
+      return render();
+    }
+    if (action === 'del-debt') {
+      d.debts.splice(i, 1);
+      return render();
+    }
+    if (action === 'wiz-add-debt') return addDebt(render, d.debts);
+    if (action === 'back') {
+      step--;
+      return render();
+    }
+    if (action === 'next' || action === 'finish') {
+      const err = validate();
+      if (err) {
+        box.querySelector('.form-error').textContent = err;
+        return;
+      }
+      if (action === 'finish') return finish();
+      step++;
+      if (WIZ_STEPS[step] === 'Summary') buildAlloc();
+      render();
+    }
+  }
+
+  const onInput = (e) => {
+    const t = e.target;
+    if (t.dataset.list) d[t.dataset.list][Number(t.dataset.i)][t.dataset.f] = t.value;
+    else if (t.dataset.field) d[t.dataset.field] = t.value;
+    else if (t.dataset.alloc) d.alloc[Number(t.dataset.alloc)].raw = t.value;
+    else if (t.dataset.g) {
+      d.goals[t.dataset.g] = t.checked;
+      return render(); // show or hide the goal's extra fields
+    }
+    updateTotals();
+  };
+  el.addEventListener('input', onInput);
+  el.addEventListener('change', (e) => {
+    if (e.target.tagName === 'SELECT' || e.target.type === 'checkbox') onInput(e);
+  });
+  render();
 }
 
 // ---------- events ----------
@@ -1081,8 +1378,12 @@ function onClick(e) {
     'add-expense': addExpense,
     'add-cat': () => categoryForm(null),
     'edit-cat': () => categoryForm(state.categories.find((c) => c.id === a.dataset.id)),
-    'split-503020': split503020,
-    setup: runSetup,
+    'add-debt-cat': () => categoryForm(null, { id: DEBT_CATEGORY_ID, name: 'Extra debt payments' }),
+    'add-rec': () => recurringForm(a.dataset.list),
+    'edit-rec': () => recurringForm(a.dataset.list, state[a.dataset.list].find((x) => x.id === a.dataset.id)),
+    'new-account': startNewAccount,
+    'edit-goals': editGoals,
+    goto: () => go(a.dataset.tab),
     month: () => {
       ui.month = addMonths(ui.month, Number(a.dataset.d));
       render();
@@ -1107,23 +1408,10 @@ function onClick(e) {
         onSubmit: (v) => commit((s) => (s.settings.extraCents = v.extra)),
       });
     },
-    'set-expected': () => openForm({
-      title: 'Usual monthly income',
-      intro: 'Your normal take-home pay. Used to pre-fill income and for the 50/30/20 split.',
-      fields: [{ name: 'income', label: 'Monthly take-home pay', type: 'money', value: state.settings.expectedIncome ?? '' }],
-      onSubmit: (v) => commit((s) => (s.settings.expectedIncome = v.income || null)),
-    }),
     backup: () => {
       downloadBackup(state);
       commit((s) => (s.settings.lastBackup = todayISO()));
       toast('Backup downloaded. Keep it somewhere safe.');
-    },
-    example: async () => {
-      if (!(await askConfirm('Load made-up example debts and a sample budget so you can try things out? Erase it later in Settings.', { okLabel: 'Load examples', title: 'Example data' }))) return;
-      state = exampleState();
-      save();
-      go('battle');
-      toast('Example data loaded. These are not your numbers.');
     },
     erase: async () => {
       if (!(await askConfirm('Erase ALL your debts, budget and progress on this device? Download a backup first if you might want it. This cannot be undone.', { okLabel: 'Erase everything', danger: true, title: 'Erase everything?' }))) return;

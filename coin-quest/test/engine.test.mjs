@@ -5,7 +5,7 @@ import { parseMoney, parsePercent, centsToInput } from '../js/money.js';
 import { addMonths, dueDateIn, addDays, isValidISO } from '../js/dates.js';
 import { balanceOf, monthlyInterest, isRegenerating, pendingInterest, tierFor, temperFor, speciesFor } from '../js/debts.js';
 import { simulatePayoff } from '../js/planner.js';
-import { monthSummary, DEBT_CATEGORY_ID } from '../js/budget.js';
+import { monthSummary, monthlyPlan, toMonthly, suggestSplit, DEBT_CATEGORY_ID, OTHER_CATEGORY_ID } from '../js/budget.js';
 import { levelInfo, streak, xpForLevel, attackXp } from '../js/player.js';
 import { emptyState, normalizeState } from '../js/state.js';
 import { SPRITES } from '../js/sprites.js';
@@ -111,24 +111,57 @@ test('avalanche pays less interest than snowball; rollover works; infeasible is 
   assert.equal(bad.feasible, false);
 });
 
-test('budget summary includes debt payments in the debt attack category', () => {
+test('monthly plan: income minus bills minus minimums leaves the amount to allocate', () => {
   const s = emptyState();
-  s.categories.find((c) => c.id === 'food').limit = 40000;
-  s.categories.find((c) => c.id === DEBT_CATEGORY_ID).limit = 30000;
-  s.incomes.push({ id: '1', amount: 300000, date: '2026-11-01', source: 'Job' });
-  s.incomes.push({ id: '2', amount: 999999, date: '2026-10-31', source: 'Old' });
+  s.incomeSources.push({ id: 'i', name: 'Job', amount: 92308, freq: 'weekly' }); // $923.08/wk ≈ $4,000/mo
+  s.bills.push({ id: 'r', name: 'Rent', amount: 150000, freq: 'monthly' });
+  s.bills.push({ id: 'p', name: 'Phone', amount: 60000, freq: 'yearly' }); // $50/mo
+  s.categories.push({ id: 'food', name: 'Groceries', kind: 'need', limit: 50000 });
+  s.categories.push({ id: DEBT_CATEGORY_ID, name: 'Extra debt payments', kind: 'debt', limit: 30000 });
+  const p = monthlyPlan(s, 50000);
+  assert.equal(p.income, 400001);
+  assert.equal(p.fixed, 155000);
+  assert.equal(p.leftover, 400001 - 155000 - 50000);
+  assert.equal(p.allocated, 80000);
+  assert.equal(p.unallocated, p.leftover - 80000);
+  assert.equal(toMonthly(100000, 'biweekly'), 216667);
+  assert.equal(toMonthly(100000, 'semimonthly'), 200000);
+});
+
+test('month summary: actual spending, extra debt payments and one-off income', () => {
+  const s = emptyState();
+  s.settings.startMonth = '2026-11';
+  s.incomeSources.push({ id: 'i', name: 'Job', amount: 400000, freq: 'monthly' });
+  s.bills.push({ id: 'r', name: 'Rent', amount: 150000, freq: 'monthly' });
+  s.categories.push({ id: 'food', name: 'Groceries', kind: 'need', limit: 40000 });
+  s.categories.push({ id: DEBT_CATEGORY_ID, name: 'Extra debt payments', kind: 'debt', limit: 30000 });
+  s.incomes.push({ id: '1', amount: 20000, date: '2026-11-20', source: 'Bonus' });
   s.expenses.push({ id: '3', amount: 45000, date: '2026-11-03', categoryId: 'food' });
+  s.expenses.push({ id: '4', amount: 1000, date: '2026-11-03', categoryId: OTHER_CATEGORY_ID });
   s.debts.push({ id: 'd', startBalance: 100000 });
-  s.ledger.push({ id: '4', debtId: 'd', kind: 'payment', amount: -25000, date: '2026-11-10' });
-  s.ledger.push({ id: '5', debtId: 'd', kind: 'interest', amount: 1000, date: '2026-11-15' });
-  const m = monthSummary(s, '2026-11');
-  assert.equal(m.income, 300000);
-  assert.equal(m.assigned, 70000);
-  assert.equal(m.toAssign, 230000);
-  assert.equal(m.spent, 70000);
-  const food = m.categories.find((c) => c.id === 'food');
-  assert.ok(food.over);
-  assert.equal(m.categories.find((c) => c.id === DEBT_CATEGORY_ID).spent, 25000);
+  s.ledger.push({ id: '5', debtId: 'd', kind: 'payment', amount: -35000, date: '2026-11-10' });
+  s.ledger.push({ id: '6', debtId: 'd', kind: 'interest', amount: 1000, date: '2026-11-15' });
+  const m = monthSummary(s, '2026-11', 10000);
+  assert.equal(m.incomeTotal, 420000);
+  assert.equal(m.debtPaid, 35000);
+  assert.equal(m.spent, 150000 + 46000 + 35000);
+  assert.equal(m.left, 420000 - m.spent);
+  assert.ok(m.categories.find((c) => c.id === 'food').over);
+  assert.equal(m.categories.find((c) => c.id === DEBT_CATEGORY_ID).spent, 25000); // 35000 paid - 10000 minimums
+  assert.equal(m.other.spent, 1000);
+  // Months before setup don't count recurring income or bills
+  const before = monthSummary(s, '2026-10', 10000);
+  assert.equal(before.income, 0);
+  assert.equal(before.fixed, 0);
+});
+
+test('suggestSplit never exceeds what is left and weights the goals', () => {
+  const split = suggestSplit(150000, ['debt', 'emergency', 'fun']);
+  const total = Object.values(split).reduce((a, b) => a + b, 0);
+  assert.ok(total <= 150000 && total > 140000);
+  assert.ok(split.debt > split.emergency && split.emergency > split.fun);
+  Object.values(split).forEach((v) => assert.equal(v % 500, 0));
+  assert.deepEqual(suggestSplit(-100, ['debt']), { debt: 0 });
 });
 
 test('levels and streaks', () => {
@@ -142,27 +175,39 @@ test('levels and streaks', () => {
   assert.equal(streak(['2026-11-18'], '2026-11-21'), 0);
 });
 
-test('normalizeState rejects foreign files and cleans bad values', () => {
+test('normalizeState rejects foreign files, cleans bad values and migrates v1', () => {
   assert.throws(() => normalizeState({ foo: 1 }));
   assert.throws(() => normalizeState({ app: 'coin-quest', version: 99 }));
   const s = normalizeState({
     app: 'coin-quest',
-    version: 1,
+    version: 2,
     debts: [{ id: 'a', startBalance: 1000, apr: -5, dueDay: 40, type: 'spaceship' }, { id: 'bad' }],
     ledger: [{ id: 'l', debtId: 'a', kind: 'payment', amount: -100, date: '2026-01-01' }, { id: 'm', debtId: 'zzz', kind: 'payment', amount: 1, date: '2026-01-01' }],
-    categories: [{ id: 'x', name: 'X', limit: 1.5 }],
-    expenses: [{ id: 'e', amount: 100, date: '2026-01-01', categoryId: 'nope' }],
+    categories: [{ id: 'x', name: 'X', limit: 1.5, target: -3 }],
+    incomeSources: [{ id: 'i', name: 'Job', amount: 1000, freq: 'hourly' }, { id: 'j', amount: -1 }],
+    expenses: [{ id: 'e', amount: 100, date: '2026-01-01', categoryId: 'nope' }, { id: 'f', amount: 100, date: '2026-01-01', categoryId: 'other' }],
   });
   assert.equal(s.debts.length, 1);
   assert.equal(s.debts[0].apr, 0);
   assert.equal(s.debts[0].dueDay, 1);
   assert.equal(s.debts[0].type, 'other');
   assert.equal(s.ledger.length, 1);
-  assert.ok(s.categories.some((c) => c.id === DEBT_CATEGORY_ID));
   assert.equal(s.categories[0].limit, 0);
-  assert.equal(s.expenses.length, 0);
-  // Round trip
+  assert.equal(s.categories[0].target, null);
+  assert.deepEqual(s.incomeSources, [{ id: 'i', name: 'Job', amount: 1000, freq: 'monthly' }]);
+  assert.equal(s.expenses.length, 1);
   assert.deepEqual(normalizeState(JSON.parse(JSON.stringify(s))), s);
+
+  // v1 save: unused preset categories dropped, old Debt attack reset, setup counted done if it had debts
+  const v1 = normalizeState({
+    app: 'coin-quest', version: 1, settings: {},
+    debts: [{ id: 'a', startBalance: 1000 }],
+    categories: [{ id: 'housing', name: 'Housing', kind: 'need', limit: 0 }, { id: 'food', name: 'Food', kind: 'need', limit: 0 }, { id: 'debt-attack', name: 'Debt attack', kind: 'debt', limit: 80000 }],
+    expenses: [{ id: 'e', amount: 100, date: '2026-01-01', categoryId: 'food' }],
+  });
+  assert.deepEqual(v1.categories.map((c) => [c.id, c.limit]), [['food', 0], ['debt-attack', 0]]);
+  assert.equal(v1.settings.setupDone, true);
+  assert.equal(v1.version, 2);
 });
 
 test('sprites are rectangular grids', () => {

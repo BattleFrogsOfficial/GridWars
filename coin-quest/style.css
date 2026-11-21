@@ -148,6 +148,46 @@ canvas.sprite.dead { filter: grayscale(1) brightness(0.6); }
 
 .month-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
 
+/* budget breakdown: income minus what's spoken for */
+.flow { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; font-variant-numeric: tabular-nums; }
+.flow li { display: flex; justify-content: space-between; gap: 12px; }
+.flow li span { color: var(--muted); }
+.flow .flow-total { border-top: 2px solid var(--line); padding-top: 8px; margin-top: 2px; font-size: 20px; }
+.flow .flow-total span { color: var(--ink); font-weight: 800; }
+.flow .flow-total b { color: var(--gold); font-weight: 900; }
+.flow .flow-total b.bad { color: var(--bad); }
+.assign { font-size: 17px; margin-top: 0; }
+.assign b { color: var(--gold); }
+.assign.bad b { color: var(--bad); }
+.row-btn b small, .rows b small { display: inline; font-weight: 600; }
+.goal-list { margin: 0 0 8px; padding-left: 20px; }
+.goal-list li { margin: 4px 0; }
+
+/* account setup */
+.wiz-progress { display: flex; gap: 4px; list-style: none; padding: 0; margin: 0 40px 8px 0; }
+.wiz-progress li { flex: 1; height: 6px; border-radius: 3px; background: var(--bg); font-size: 0; }
+.wiz-progress li.done { background: var(--series-b); }
+.wiz-progress li.on { background: var(--gold); }
+.wiz-step { color: var(--muted); font-size: 13px; font-weight: 800; margin: 0 0 4px; }
+.wiz h2 { font-size: 22px; }
+.wiz-total { background: var(--bg); border-radius: 10px; padding: 10px 12px; }
+.wiz-total b { color: var(--gold); }
+.wiz-total b.bad { color: var(--bad); }
+.wiz-nav { position: sticky; bottom: 0; background: var(--panel); padding: 10px 0 2px; }
+.wrows { display: grid; gap: 10px; margin: 10px 0; }
+.wrow { display: grid; grid-template-columns: 1fr 1fr 40px; gap: 6px; background: var(--bg); border-radius: 10px; padding: 8px; }
+.wrow .wname { grid-column: 1 / 3; font-weight: 800; }
+.wrow .x { grid-column: 3; grid-row: 1; }
+.wrow input, .wrow select { min-width: 0; background: var(--panel); }
+.wrow select { grid-column: 2 / 4; }
+.arow { display: grid; grid-template-columns: 1fr 120px auto; gap: 8px; align-items: center; }
+.arow label { font-weight: 800; }
+.arow small { display: inline; }
+.goal { background: var(--bg); border: 2px solid transparent; border-radius: 10px; padding: 10px 12px; margin: 8px 0; }
+.goal.on { border-color: var(--series-b); }
+.goal .field { margin: 8px 0 0; }
+.goal input:not([type=checkbox]) { background: var(--panel); }
+
 /* per-debt projections */
 .chev { color: var(--muted); font-size: 22px; line-height: 1; margin-left: 2px; }
 .pj-head { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; }
