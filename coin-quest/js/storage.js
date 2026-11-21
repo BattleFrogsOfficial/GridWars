@@ -57,10 +57,31 @@ export async function loadState() {
   try {
     return normalizeState(typeof raw === 'string' ? JSON.parse(raw) : raw);
   } catch (err) {
-    console.error('Save file could not be read, starting fresh', err);
+    // Never let a later save overwrite data we couldn't read: keep a copy of it first.
+    console.error('Save file could not be read; a copy was kept and the app started fresh', err);
+    const copy = typeof raw === 'string' ? raw : JSON.stringify(raw);
+    try {
+      const d = await db();
+      await new Promise((resolve, reject) => {
+        const tx = d.transaction(STORE, 'readwrite');
+        tx.objectStore(STORE).put(copy, `unreadable-${Date.now()}`);
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      });
+    } catch {
+      try {
+        localStorage.setItem(`${DB_NAME}-unreadable`, copy);
+      } catch {
+        /* nothing more we can do */
+      }
+    }
+    loadProblem = true;
     return emptyState();
   }
 }
+
+/** True if the last load found a save it could not read (a copy of it was kept). */
+export let loadProblem = false;
 
 export async function saveState(state) {
   const json = JSON.stringify(state);

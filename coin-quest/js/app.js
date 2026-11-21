@@ -16,7 +16,7 @@ import {
 } from './budget.js';
 import { XP, attackXp, levelInfo, streak } from './player.js';
 import { uid, emptyState } from './state.js';
-import { loadState, saveState, requestPersistence, downloadBackup, readBackup } from './storage.js';
+import { loadState, saveState, requestPersistence, downloadBackup, readBackup, loadProblem } from './storage.js';
 import { drawSprite } from './sprites.js';
 import { esc, toast, openSheet, openForm, askConfirm } from './ui.js';
 import { lineChart, attachCharts, SERIES_COLORS } from './chart.js';
@@ -1937,6 +1937,7 @@ function enableSwipe() {
 
 async function boot() {
   state = await loadState();
+  if (loadProblem) setTimeout(() => toast('Your saved data could not be read. A copy was kept safe; restore a backup in Settings.', 'bad'), 500);
   runAccrual();
   document.addEventListener('click', onClick);
   document.addEventListener('change', onChange);
