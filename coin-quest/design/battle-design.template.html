@@ -78,7 +78,50 @@ figcaption b { color: var(--ink); display: block; }
 .loading { color: var(--muted); font-size: 14px; }
 .summon { position: absolute; inset: 0; display: grid; place-items: center; background: #05070f; color: var(--muted); font-weight: 800; }
 .dmgrow canvas { width: 72px; height: 100px; }
-@media (prefers-reduced-motion: reduce) { .dmg { animation: none; } }
+/* attacks */
+.stage { transform-origin: 50% 55%; will-change: transform; }
+.hp > u { position: absolute; left: 0; top: 0; bottom: 0; background: #fff3c4; transition: width 0.6s ease-in; }
+.hp > i { position: relative; }
+.banner { position: absolute; left: 0; right: 0; top: 27%; text-align: center; pointer-events: none; font-weight: 900; font-style: italic; letter-spacing: 0.02em; line-height: 1;
+  color: #fff4c0; -webkit-text-stroke: 2px #2b1600; paint-order: stroke fill; text-shadow: 0 4px 0 #2b1600, 0 0 18px rgba(255, 190, 60, 0.7); animation: slam 1.5s cubic-bezier(.2, 1.4, .4, 1) forwards; }
+.banner.s1 { font-size: 26px; } .banner.s2 { font-size: 30px; } .banner.s3 { font-size: 34px; }
+.banner.s4 { font-size: 40px; color: #ffe23a; } .banner.s5 { font-size: 30px; color: #fff; text-shadow: 0 4px 0 #2b1600, 0 0 22px #ffd040, 0 0 40px #ff9a20; }
+.banner small { display: block; font-size: 15px; font-style: normal; margin-top: 6px; -webkit-text-stroke: 0; color: #fff; text-shadow: 0 2px 0 #000; }
+.banner.win { top: 30%; font-size: 44px; color: #ffe23a; animation: win 3s ease-out forwards; }
+@keyframes slam { 0% { opacity: 0; transform: scale(2.4) rotate(-4deg); } 14% { opacity: 1; transform: scale(1) rotate(-4deg); } 75% { opacity: 1; transform: scale(1.04) rotate(-4deg); } 100% { opacity: 0; transform: scale(1.1) rotate(-4deg) translateY(-12px); } }
+@keyframes win { 0% { opacity: 0; transform: scale(0.3); } 12% { opacity: 1; transform: scale(1.15); } 20% { transform: scale(1); } 85% { opacity: 1; } 100% { opacity: 0; } }
+.dmg.big { animation: rise2 2.2s ease-out forwards; white-space: nowrap; }
+.hud { transition: opacity 0.35s, transform 0.35s; }
+.hud.away { opacity: 0; transform: translateY(-24px); }
+.dmg.s1 { font-size: 30px; } .dmg.s2 { font-size: 34px; } .dmg.s3 { font-size: 40px; } .dmg.s4 { font-size: 46px; color: #ffe23a; } .dmg.s5 { font-size: 50px; color: #fff; text-shadow: 0 3px 0 #000, 0 0 14px #ffb020; }
+.dmg.long { font-size: 34px; }
+.dmg small { display: block; text-align: center; font-size: 13px; color: #fff; }
+@keyframes rise2 { 0% { opacity: 0; transform: translate(-50%, 10px) scale(0.6); } 10% { opacity: 1; transform: translate(-50%, 0) scale(1.25); } 18% { transform: translate(-50%, 0) scale(1); } 80% { opacity: 1; transform: translate(-50%, -14px); } 100% { opacity: 0; transform: translate(-50%, -30px); } }
+.skip { position: absolute; right: 12px; bottom: 76px; font-size: 12px; color: rgba(255, 255, 255, 0.6); pointer-events: none; }
+.sheet { position: absolute; inset: 0; z-index: 5; display: flex; align-items: flex-end; background: rgba(4, 6, 16, 0.55); }
+.sheet[hidden] { display: none; }
+.sheet .card { width: 100%; margin: 8px; padding: 14px; background: var(--panel); border: 2px solid var(--line); border-radius: 16px; box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.5); }
+.sheet h3 { margin: 0; font-size: 18px; font-weight: 900; }
+.sheet .sub { color: var(--muted); font-size: 13px; margin: 0 0 10px; }
+.sheet label { display: block; font-size: 13px; font-weight: 800; color: var(--muted); }
+.sheet input { width: 100%; margin-top: 4px; min-height: 46px; padding: 0 12px; font: inherit; font-size: 20px; font-weight: 900; color: var(--ink); background: #0d1330; border: 2px solid var(--line); border-radius: 10px; font-variant-numeric: tabular-nums; }
+.sheet input:focus-visible { outline: 3px solid var(--gold); outline-offset: 1px; }
+.chips { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin: 10px 0; }
+.chips button { min-height: 36px; padding: 0 6px; border: 2px solid var(--line); border-radius: 9px; font: inherit; font-size: 13px; font-weight: 900; color: var(--ink); background: var(--panel-2); cursor: pointer; }
+.chips button:focus-visible { outline: 3px solid var(--gold); }
+.tierprev { display: flex; align-items: baseline; gap: 8px; padding: 8px 10px; margin-bottom: 10px; background: #0d1330; border-radius: 10px; }
+.tierprev .stars { color: var(--gold); letter-spacing: 1px; font-size: 14px; }
+.tierprev b { font-size: 16px; }
+.tierprev small { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.sheet .row { display: flex; gap: 8px; }
+.tiers td, .tiers th { text-align: left !important; vertical-align: top; }
+.tiers td { font-size: 14px; color: var(--muted); padding: 10px 8px !important; }
+.tiers .stars { color: var(--gold); white-space: nowrap; }
+.tiers button { min-height: 36px; padding: 0 14px; border: 2px solid var(--line); border-radius: 9px; font: inherit; font-weight: 900; background: linear-gradient(#ffd25a, var(--gold-deep)); color: #2b1600; cursor: pointer; }
+.reacts { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px 24px; margin: 12px 0 0; }
+.reacts div { font-size: 14px; color: var(--muted); }
+.reacts b { color: var(--ink); }
+@media (prefers-reduced-motion: reduce) { .dmg, .banner { animation-duration: 0.01s; animation-delay: 0s; } }
 </style>
 
 <main>
@@ -94,6 +137,18 @@ figcaption b { color: var(--ink); display: block; }
         <button class="arrow l" id="prev" aria-label="Previous monster">‹</button>
         <button class="arrow r" id="next" aria-label="Next monster">›</button>
         <div class="dots" id="dots"></div>
+        <div class="skip" id="skip" hidden>Tap to speed up</div>
+        <div class="sheet" id="sheet" hidden>
+          <form class="card" id="attackForm">
+            <h3 id="sheetTitle">Attack</h3>
+            <p class="sub">Log a payment. The bigger the share of its HP, the bigger the attack.</p>
+            <label for="amt">Payment</label>
+            <input id="amt" inputmode="decimal" autocomplete="off" aria-describedby="tierName">
+            <div class="chips" id="chips"></div>
+            <div class="tierprev"><span class="stars" id="tierStars" aria-hidden="true"></span><b id="tierName"></b><small id="tierShare"></small></div>
+            <div class="row"><button type="button" class="btn" id="cancel">Cancel</button><button type="submit" class="btn primary" id="strike">Strike!</button></div>
+          </form>
+        </div>
         <div class="actions">
           <button class="btn primary" id="attack">Attack (pay)</button>
           <button class="btn" id="info">Details</button>
@@ -110,7 +165,7 @@ figcaption b { color: var(--ink); display: block; }
         <dt>Swiping</dt>
         <dd>Drag the scene, use the arrows or press ← →. The monster slides away and turns side-on as it goes, the scenery pans as if you turned your head, and the next one turns toward you as it arrives. Let go before a quarter of the width and it settles back.</dd>
         <dt>Attacking</dt>
-        <dd>Attack (pay) opens the payment form in the app. Here each attack takes 12% off: a white hit flash, a shake and the damage number, and every fifth of the debt paid shows new wounds. Boss marks at 75/50/25% sit on the HP bar.</dd>
+        <dd>Attack (pay) opens the payment form. Once it's saved, the attack plays: five tiers by the share of the monster's full HP the payment takes off, from a Slash to a Legendary Strike, and a finishing blow when the debt reaches zero. The HP bar drains with a trailing ghost bar, and new wounds show as each fifth of the debt is paid. Boss marks at 75/50/25% sit on the HP bar.</dd>
         <dt>What the art says</dt>
         <dd>Type from the peak balance (Slime under $500 up to Elder Dragon over $40k; a mortgage is a Castle). Colour from the interest rate: <span class="legend-chip" style="background:#3f9a52"></span>calm under 5%, <span class="legend-chip" style="background:#c0681c"></span>angry 5–15%, <span class="legend-chip" style="background:#a8262e"></span>furious 15%+. Frames read as rank: wood, iron, bronze, silver, gold, obsidian.</dd>
       </dl>
@@ -122,6 +177,19 @@ figcaption b { color: var(--ink); display: block; }
     <figure><canvas id="sb0" width="120" height="168"></canvas><figcaption><b>At rest</b>Facing the current monster.</figcaption></figure>
     <figure><canvas id="sb1" width="120" height="168"></canvas><figcaption><b>Swiping left</b>It turns side-on and slides off to the left; the next one arrives from the right.</figcaption></figure>
     <figure><canvas id="sb2" width="120" height="168"></canvas><figcaption><b>Swiping right</b>The same in reverse, back to the previous monster.</figcaption></figure>
+  </div>
+
+  <h2>Attacks</h2>
+  <p>Paying a debt happens once or twice a month, so every payment is a staged moment. The tier comes from the share of the monster's full HP (its highest balance) the payment takes off. Play any of them on the phone above, on whichever monster you're facing.</p>
+  <div class="gallery"><table class="tiers" id="tiers"><thead><tr><th>Attack</th><th>Share of HP</th><th>Length</th><th>What happens</th><th></th></tr></thead><tbody></tbody></table></div>
+  <div class="reacts">
+    <div><b>Slime</b>: squashes flat and wobbles; goo flies, and big hits splat goo on your screen that drips off.</div>
+    <div><b>Goblin</b>: knocked back a step, spinning; chips fly.</div>
+    <div><b>Troll</b>: barely moves, just shudders; dust bursts off the ground.</div>
+    <div><b>Young Dragon</b>: rears back; scales go flying.</div>
+    <div><b>Elder Dragon</b>: blasted upward in the air; scales scatter.</div>
+    <div><b>Castle</b>: rumbles and sinks; bricks tumble and bounce, dust rolls out.</div>
+    <div><b>Finishing blow</b>: the monster flashes three times and dissolves into gold coins, then "Defeated!" and a rain of gold.</div>
   </div>
 
   <h2>Wearing them down</h2>
@@ -137,6 +205,7 @@ figcaption b { color: var(--ink); display: block; }
 <script>
 /*__MODELS__*/
 /*__SCENES__*/
+/*__BATTLEFX__*/
 
 // ---------- sample debts (made up, for the design) ----------
 // `peak` is the highest the debt has been; it sets the monster type. `balance` sets the damage.
@@ -148,6 +217,7 @@ const DEBTS = [
   { name: 'Dentist', type: 'slime', temper: 'calm', apr: 0, balance: 32000, peak: 40000, species: 'Slime' },
   { name: 'Mortgage', type: 'castle', temper: 'angry', apr: 6.5, balance: 21000000, peak: 26000000, species: 'Castle Keep' },
 ];
+DEBTS.forEach((d) => (d.start = d.balance));
 const TEMPER_NAME = { calm: 'Calm', angry: 'Angry', furious: 'Furious' };
 const money = (c) => (c / 100).toLocaleString(undefined, { style: 'currency', currency: 'USD' });
 const dmgOf = (d) => damageLevel(d.balance, d.peak);
@@ -239,8 +309,41 @@ function drawParticles(g, kind, time) {
  * Draw a monster frame on the stage. `turn` 0..1 squeezes it side-on (a smooth stand-in for turning),
  * `x` shifts it. Idle motion (a bob, the slime's squish) is done here too, so no frames need swapping.
  */
+const tmp = document.createElement('canvas');
+tmp.width = W; tmp.height = H;
+const tg = tmp.getContext('2d');
 function drawMonster(g, d, cv, x, turn, time, opts = {}) {
   if (!cv) return;
+  if (opts.xf) {
+    const xf = opts.xf;
+    if (xf.dissolve >= 1) return;
+    const target = xf.dissolve > 0 ? tg : g;
+    if (target === tg) { tg.clearRect(0, 0, W, H); tg.imageSmoothingEnabled = false; }
+    const px0 = W / 2 + x, py0 = xf.pivotY;
+    target.save();
+    target.translate(Math.round(px0 + xf.dx), Math.round(py0 + xf.dy));
+    target.rotate(xf.rot);
+    target.scale(xf.sx, xf.sy);
+    target.translate(-px0, -py0);
+    drawMonster(target, d, cv, x, turn, time, { flash: xf.flash });
+    target.restore();
+    if (target === tg) {
+      // dissolve from the top down into gold, in 2x2 blocks
+      const img = tg.getImageData(0, 0, W, H), a = img.data, b = opts.box;
+      const hgt = Math.max(1, b.y1 - b.y0);
+      for (let y = 0; y < H; y++) for (let xx = 0; xx < W; xx++) {
+        const o = (y * W + xx) * 4;
+        if (!a[o + 3]) continue;
+        const v = 0.5 * fxBay(xx >> 1, y >> 1) + 0.5 * Math.min(1, Math.max(0, (y - b.y0) / hgt));
+        const cut = xf.dissolve * 1.1;
+        if (v < cut) a[o + 3] = 0;
+        else if (v < cut + 0.07) { a[o] = 255; a[o + 1] = 214; a[o + 2] = 80; }
+      }
+      tg.putImageData(img, 0, 0);
+      g.drawImage(tmp, 0, 0);
+    }
+    return;
+  }
   const sx = 1 - 0.42 * Math.min(1, turn);
   const breathe = d.type === 'slime' ? Math.sin(time * 3) * 0.05 : 0;
   const bob = isFlyer(d) || d.type === 'castle' ? 0 : Math.round(Math.sin(time * 2.2) * 0.6);
@@ -262,6 +365,15 @@ function compose(g, i, offset, time, opts = {}) {
   if (offset) g.drawImage(sceneOf(n.type), Math.round(shift * 0.5 + dir * W), 0);
   if (!opts.noParticles) drawParticles(g, HABITATS[d.type].particles, time);
   const a = Math.abs(offset);
+  const A = opts.atk;
+  if (A) {
+    const dim = A.dim();
+    if (dim > 0.01) { g.globalAlpha = dim; g.fillStyle = '#05030c'; g.fillRect(0, 0, W, H); g.globalAlpha = 1; }
+    A.drawBack(g);
+    drawMonster(g, d, frameFor(d, time), 0, 0, time, { xf: A.monster(), box: opts.box });
+    A.drawFront(g);
+    return;
+  }
   drawMonster(g, d, frameFor(d, time), shift * 1.1, a * 1.6, time, { shake: opts.hit, flash: opts.flash });
   if (offset) drawMonster(g, n, frameFor(n, time), dir * W * 1.1 * Math.pow(1 - a, 1.6), (1 - a) * 1.4, time);
 }
@@ -280,7 +392,7 @@ function renderHud() {
     <div class="grow">
       <div class="name">${d.name}${d.boss ? '<span class="badge">BOSS</span>' : ''}</div>
       <small>${TEMPER_NAME[d.temper]} ${d.species} · ${d.apr}% APR</small>
-      <div class="hp" role="meter" aria-label="HP" aria-valuenow="${Math.round(pct)}" aria-valuemin="0" aria-valuemax="100"><i style="width:${pct}%"></i>${d.boss ? [75, 50, 25].map((p) => `<span class="ph" style="left:${p}%"></span>`).join('') : ''}<b>${money(d.balance)}</b></div>
+      <div class="hp" role="meter" aria-label="HP" aria-valuenow="${Math.round(pct)}" aria-valuemin="0" aria-valuemax="100"><u style="width:${pct}%"></u><i style="width:${pct}%"></i>${d.boss ? [75, 50, 25].map((p) => `<span class="ph" style="left:${p}%"></span>`).join('') : ''}<b>${money(d.balance)}</b></div>
     </div>`;
   const pk = `p|${d.type}|${d.temper}|${dmgOf(d)}`;
   if (!cache.has(pk)) cache.set(pk, toCanvas(renderPortrait(d.type, d.temper, { size: 56, damage: dmgOf(d) })));
@@ -311,13 +423,15 @@ function loop(now) {
     }
   }
   const hit = now < hitUntil;
-  compose(sg, cur, offset, time, { hit, flash: hit && now < hitUntil - 260 });
+  if (atk) runAttack(now);
+  compose(sg, cur, offset, time, { hit, flash: hit && now < hitUntil - 260, atk: atk && atk.A, box: atk && atk.info.box });
   if (frameFor(DEBTS[cur], time)) document.getElementById('summon')?.remove();
   requestAnimationFrame(loop);
 }
 
 screen.addEventListener('pointerdown', (e) => {
-  if (e.target.closest('button') || anim) return;
+  if (atk) { atk.A.skip(); return; }
+  if (e.target.closest('button, .sheet') || anim) return;
   drag = { x0: e.clientX, offset: 0 };
   stage.setPointerCapture(e.pointerId);
 });
@@ -333,25 +447,196 @@ const end = () => {
 };
 stage.addEventListener('pointerup', end);
 stage.addEventListener('pointercancel', end);
-document.getElementById('next').onclick = () => go(1);
-document.getElementById('prev').onclick = () => go(-1);
+document.getElementById('next').onclick = () => !atk && go(1);
+document.getElementById('prev').onclick = () => !atk && go(-1);
 document.addEventListener('keydown', (e) => {
+  if (atk || !sheet.hidden) return;
   if (e.key === 'ArrowRight') go(1);
   if (e.key === 'ArrowLeft') go(-1);
 });
-document.getElementById('attack').onclick = () => {
+// ---------- attacking ----------
+let atk = null, lastNow = 0;
+const sheet = document.getElementById('sheet');
+const amt = document.getElementById('amt');
+const parseCents = (v) => Math.round(parseFloat(String(v).replace(/[^0-9.]/g, '')) * 100) || 0;
+const SHARES = [0.01, 0.05, 0.12, 0.3, 0.6];
+
+/** Bounding box, main colours and a sample of pixel positions of a rendered monster frame. */
+const infoCache = new WeakMap();
+function frameInfo(cv) {
+  if (infoCache.has(cv)) return infoCache.get(cv);
+  const a = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+  let x0 = W, y0 = H, x1 = 0, y1 = 0;
+  const counts = new Map(), points = [];
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const o = (y * W + x) * 4;
+    if (a[o + 3] < 200) continue;
+    x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+    if ((x + y) % 3 === 0) points.push([x, y]);
+    if (a[o] + a[o + 1] + a[o + 2] < 90) continue; // outline
+    const k = `#${[a[o], a[o + 1], a[o + 2]].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+    counts.set(k, (counts.get(k) || 0) + 1);
+  }
+  const palette = [...counts].sort((p, q) => q[1] - p[1]).slice(0, 4).map((p) => p[0]);
+  const info = { box: { x0, y0, x1, y1 }, palette, points };
+  infoCache.set(cv, info);
+  return info;
+}
+
+function updatePreview() {
   const d = DEBTS[cur];
-  if (d.balance <= 0) return;
-  hitUntil = performance.now() + 420;
-  const dmg = Math.min(d.balance, Math.round((d.peak * 0.12) / 100) * 100);
-  d.balance = Math.max(1, d.balance - dmg); // the design keeps it alive so you can keep looking
-  const pop = document.createElement('div');
-  pop.className = 'dmg';
-  pop.textContent = `−${money(dmg)}`;
-  screen.appendChild(pop);
-  setTimeout(() => pop.remove(), 1200);
-  renderHud();
+  const cents = Math.min(parseCents(amt.value), d.balance);
+  const tr = attackTier(cents, d.peak, d.balance);
+  document.getElementById('tierStars').textContent = '★'.repeat(tr.stars) + '☆'.repeat(5 - tr.stars);
+  document.getElementById('tierName').textContent = cents ? (tr.kill ? `${tr.name} + Final Blow` : tr.name) : 'Enter an amount';
+  document.getElementById('tierShare').textContent = cents ? `${(tr.share * 100).toFixed(tr.share < 0.1 ? 1 : 0)}% of its HP` : '';
+  document.getElementById('strike').disabled = !cents;
+}
+function openSheet() {
+  const d = DEBTS[cur];
+  if (atk || anim || d.balance <= 0) return;
+  document.getElementById('sheetTitle').textContent = `Attack ${d.name}`;
+  const chips = SHARES.map((sh) => [`${sh * 100}%`, Math.min(d.balance, Math.max(100, Math.round((d.peak * sh) / 100) * 100))]);
+  chips.push(['Pay it off', d.balance]);
+  const box = document.getElementById('chips');
+  box.innerHTML = '';
+  for (const [label, cents] of chips) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    b.setAttribute('aria-label', `${label}: ${money(cents)}`);
+    b.onclick = () => { amt.value = (cents / 100).toFixed(2); updatePreview(); };
+    box.appendChild(b);
+  }
+  amt.value = (chips[1][1] / 100).toFixed(2);
+  updatePreview();
+  sheet.hidden = false;
+  amt.focus();
+}
+amt.addEventListener('input', updatePreview);
+document.getElementById('cancel').onclick = () => { sheet.hidden = true; document.getElementById('attack').focus(); };
+document.getElementById('attackForm').onsubmit = (e) => {
+  e.preventDefault();
+  const d = DEBTS[cur];
+  const cents = Math.min(parseCents(amt.value), d.balance);
+  if (!cents) return;
+  sheet.hidden = true;
+  strike(cents);
 };
+document.getElementById('attack').onclick = openSheet;
+
+function strike(cents) {
+  const d = DEBTS[cur];
+  const time = performance.now() / 1000;
+  const cv = frameFor(d, time);
+  if (!cv) return;
+  const tr = attackTier(cents, d.peak, d.balance);
+  const newBal = d.balance - cents;
+  request(d, damageLevel(Math.max(0, newBal), d.peak), true); // new wounds ready by the impact
+  const info = frameInfo(cv);
+  const A = createAttack({
+    tier: tr.index, kill: tr.kill, type: d.type, box: info.box, palette: info.palette, points: info.points,
+    W, H, groundY: GY, flying: isFlyer(d), reduced: matchMedia('(prefers-reduced-motion: reduce)').matches, seed: (Math.random() * 1e9) | 0,
+  });
+  atk = { A, d, cents, tr, newBal, info };
+  if (tr.index >= 3) document.getElementById('hud').classList.add('away'); // clear the sky for the big ones
+  lastNow = performance.now();
+  document.getElementById('skip').hidden = false;
+  document.querySelectorAll('.arrow, .actions .btn').forEach((b) => (b.disabled = true));
+}
+
+function popText(cls, html, ms) {
+  const el = document.createElement('div');
+  el.className = cls;
+  el.innerHTML = html;
+  screen.appendChild(el);
+  setTimeout(() => el.remove(), ms);
+  return el;
+}
+
+function runAttack(now) {
+  const { A, d, tr } = atk;
+  const cues = A.step((now - lastNow) / 1000);
+  lastNow = now;
+  for (const c of cues) {
+    if (c.cue === 'banner') popText(`banner s${c.size}`, c.text, 1500);
+    if (c.cue === 'buzz') { try { navigator.vibrate?.(c.ms); } catch { /* not supported */ } }
+    if (c.cue === 'hit') {
+      // the main hit lands: damage counts up, the HP bar drains and a ghost bar follows
+      document.getElementById('hud').classList.remove('away');
+      const el = popText(`dmg big s${tr.stars}${money(atk.cents).length > 9 ? ' long' : ''}`, `<span>−$0</span><small>${(tr.share * 100).toFixed(tr.share < 0.1 ? 1 : 0)}% of its HP</small>`, 2300);
+      const span = el.querySelector('span'), t0 = performance.now(), dur = 300 + tr.index * 180, hitCents = atk.cents;
+      const count = () => {
+        const k = Math.min(1, (performance.now() - t0) / dur);
+        span.textContent = `−${money(Math.round((hitCents * (1 - Math.pow(1 - k, 3))) / 100) * 100)}`;
+        if (k < 1) requestAnimationFrame(count);
+        else span.textContent = `−${money(hitCents)}`;
+      };
+      requestAnimationFrame(count);
+      d.balance = Math.max(0, atk.newBal);
+      const pct = Math.max(0, (d.balance / d.peak) * 100);
+      const bar = document.querySelector('#hud .hp');
+      const i = bar.querySelector('i'), u = bar.querySelector('u');
+      i.style.transitionDuration = `${0.3 + tr.index * 0.25}s`;
+      i.style.width = `${pct}%`;
+      setTimeout(() => { u.style.transitionDuration = `${0.5 + tr.index * 0.2}s`; u.style.width = `${pct}%`; }, 450 + tr.index * 150);
+      bar.querySelector('b').textContent = money(d.balance);
+      bar.setAttribute('aria-valuenow', Math.round(pct));
+      // a boss loses a phase when a 25% mark is crossed
+      if (d.boss) {
+        const before = Math.floor(((d.balance + atk.cents) / d.peak) * 4), after = Math.floor((d.balance / d.peak) * 4);
+        if (after < before && d.balance > 0) setTimeout(() => popText('banner s3', `Phase broken!<small>${4 - after} of 4 down</small>`, 1500), 1100 + tr.index * 200);
+      }
+    }
+    if (c.cue === 'defeated') popText('banner win', `Defeated!<small>${d.name} is paid off</small>`, 3000);
+  }
+  if (A.done) {
+    atk = null;
+    document.getElementById('skip').hidden = true;
+    document.querySelectorAll('.arrow, .actions .btn').forEach((b) => (b.disabled = false));
+    if (d.balance <= 0) {
+      // the design brings the monster back so it can be fought again
+      d.balance = d.start;
+      setTimeout(() => popText('banner s1', 'Demo: monster restored', 1400), 200);
+    }
+    renderHud();
+  }
+}
+
+// ---------- the attacks table ----------
+function tiersTable() {
+  const rows = [
+    ['Slash', 0, '~2 s', 'Gold motes gather at your hands, one bright diagonal cut, hit-stop, sparks, debris and coins knocked loose.'],
+    ['Cross Cut', 1, '~3 s', 'Two cuts in an X. The X glows, then bursts in a ring of sparks and coins.'],
+    ['Heavy Blow', 2, '~3 s', 'The world darkens and the monster trembles through a long charge, then one huge overhead cut, a white flash and a shockwave across the ground.'],
+    ['Critical Strike', 3, '~4 s', 'Gold rushes in from the screen edges with speed lines. A three-cut combo, an orb of light gathers in the monster, a beam of light blasts through it in slow motion.'],
+    ['Legendary Strike', 4, '~5 s', 'The sky goes dark and lightning strikes. Energy rises from the ground, a giant sword of light descends and plunges in: slow motion, triple shockwave, lightning bursts, a rain of gold.'],
+    ['Final Blow', -1, '+3 s', 'Added to any attack that pays the debt off. The monster flashes, dissolves from the top into gold coins, "Defeated!", gold rains down.'],
+  ];
+  const tb = document.querySelector('#tiers tbody');
+  for (const [name, k, len, what] of rows) {
+    const tr = document.createElement('tr');
+    const tier = ATTACK_TIERS[k];
+    const range = k < 0 ? 'Pays it off' : k === 4 ? `${tier.min * 100}% or more` : `${tier.min * 100}–${ATTACK_TIERS[k + 1].min * 100}%`;
+    tr.innerHTML = `<th scope="row">${name}<br><span class="stars" aria-label="${k < 0 ? 'finisher' : tier.stars + ' of 5'}">${k < 0 ? '✦' : '★'.repeat(tier.stars)}</span></th><td>${range}</td><td>${len}</td><td>${what}</td><td><button type="button">Play</button></td>`;
+    tr.querySelector('button').onclick = () => {
+      if (atk || anim) return;
+      const d = DEBTS[cur];
+      if (d.balance <= 0) d.balance = d.start;
+      let cents;
+      if (k < 0) cents = d.balance;
+      else {
+        cents = Math.round(d.peak * (k === 0 ? 0.01 : (tier.min + (ATTACK_TIERS[k + 1]?.min ?? 0.6)) / 2));
+        if (cents >= d.balance) { d.balance = d.start = Math.max(d.start, Math.min(d.peak, cents * 2)); renderHud(); }
+      }
+      document.querySelector('.phone').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setTimeout(() => strike(cents), 450);
+    };
+    tb.appendChild(tr);
+  }
+}
+tiersTable();
+
 document.getElementById('info').onclick = () => {
   const b = document.getElementById('info');
   b.textContent = `${DEBTS[cur].name}: ${money(DEBTS[cur].balance)}`; // in the app this opens the debt's details sheet

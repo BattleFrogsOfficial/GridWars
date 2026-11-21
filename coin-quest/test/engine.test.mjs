@@ -518,3 +518,29 @@ test('monster type comes from the peak balance; paying down only adds damage', a
   // a same-day charge and payment still counts the charge toward the peak
   assert.equal(peakBalance({ id: 'q', startBalance: 1000 }, [{ debtId: 'q', amount: 500, date: '2026-01-01' }, { debtId: 'q', amount: -1400, date: '2026-01-01' }]), 1500);
 });
+
+import { attackTier, createAttack } from '../js/battlefx.js';
+
+test('attack tier follows the share of full HP taken off', () => {
+  const peak = 100000;
+  assert.equal(attackTier(1000, peak, 50000).key, 'slash'); // 1%
+  assert.equal(attackTier(5000, peak, 50000).key, 'cross'); // 5%
+  assert.equal(attackTier(12000, peak, 50000).key, 'heavy'); // 12%
+  assert.equal(attackTier(30000, peak, 50000).key, 'critical'); // 30%
+  assert.equal(attackTier(50000, peak, 90000).key, 'legendary'); // 50%
+  assert.equal(attackTier(50000, peak, 50000).kill, true);
+  assert.equal(attackTier(49999, peak, 50000).kill, false);
+  assert.equal(attackTier(0, 0, 0).key, 'slash');
+});
+
+test('every attack runs to the end, hits once as the main blow, and a kill says defeated', () => {
+  for (let tier = 0; tier < 5; tier++) for (const kill of [false, true]) {
+    const A = createAttack({ tier, kill, type: tier % 2 ? 'castle' : 'slime', box: { x0: 40, y0: 60, x1: 80, y1: 130 }, palette: ['#3f9a52'], points: [[60, 90]], W: 120, H: 168, groundY: 129, seed: 7 });
+    const seen = [];
+    for (let i = 0; i < 2000 && !A.done; i++) seen.push(...A.step(1 / 60).map((c) => c.cue));
+    assert.ok(A.done, `tier ${tier} finished`);
+    assert.equal(seen.filter((c) => c === 'hit').length, 1);
+    assert.equal(seen.includes('defeated'), kill);
+    assert.ok(seen.includes('banner'));
+  }
+});
