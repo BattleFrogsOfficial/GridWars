@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Coin Quest</title>
+  <meta name="description" content="Budget your gold and slay your debts. Your data stays on your phone.">
+  <meta name="theme-color" content="#1b142e">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <!-- iOS home-screen support -->
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Coin Quest">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="view" aria-live="polite"><p class="loading">Loading…</p></main>
+  <nav class="tabs" aria-label="Sections">
+    <a href="#/town" data-tab="town">Town</a>
+    <a href="#/battle" data-tab="battle">Battle</a>
+    <a href="#/quest" data-tab="quest">Quest</a>
+    <a href="#/budget" data-tab="budget">Budget</a>
+    <a href="#/settings" data-tab="settings">Gear</a>
+  </nav>
+  <noscript>Coin Quest needs JavaScript turned on.</noscript>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
