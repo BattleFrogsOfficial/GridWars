@@ -25,7 +25,7 @@ GitHub Pages on a private repository needs a paid GitHub plan.
 | Debt balance | Never stored. `startBalance + sum(ledger)`; payments are negative, interest/charges positive, Scout reports are corrections |
 | Interest | Added automatically on each due date as `balance × APR ÷ 12`, catching up on months the app was closed |
 | Monster type | Set by the debt's highest-ever balance: Slime < $500 ≤ Goblin < $2k ≤ Troll < $10k ≤ Young Dragon < $40k ≤ Elder Dragon (flying). Mortgages are a Castle. Paying it down never changes the type |
-| Attacks | Share of the monster's full HP a payment takes off: Slash < 2% ≤ Cross Cut < 7% ≤ Heavy Blow < 20% ≤ Critical Strike < 45% ≤ Legendary Strike. Paying it off adds the Final Blow |
+| Attacks | Share of the full debt (highest balance) a payment takes off: Slash < 2% ≤ Cross Cut < 7% ≤ Heavy Blow < 20% ≤ Critical Strike < 45% ≤ Legendary Strike. Paying it off adds the Final Blow |
 | Damage | Share of the peak paid off, in five stages: slashes, wounds, chunks knocked out, torn wings, duller colours, a hurt lean |
 | Monster color | APR: calm < 5% ≤ angry < 15% ≤ furious |
 | Regenerating | Minimum payment ≤ a month of interest. The debt never shrinks on minimums alone |

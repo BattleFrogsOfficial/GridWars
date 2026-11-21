@@ -40,14 +40,26 @@ p { margin: 6px 0; max-width: 64ch; }
 .hud .name { font-weight: 900; font-size: 17px; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hud small { display: block; color: var(--muted); font-size: 12px; }
 .badge { display: inline-block; font-size: 10px; font-weight: 900; letter-spacing: 0.05em; padding: 1px 6px; border-radius: 5px; background: linear-gradient(#ffd25a, var(--gold-deep)); color: #2b1600; vertical-align: 2px; margin-left: 4px; }
-.hp { position: relative; height: 18px; margin-top: 4px; background: var(--line); border-radius: 5px; overflow: hidden; }
-.hp > i { display: block; height: 100%; background: linear-gradient(#ff7a6a, var(--hp)); transition: width 0.5s ease-out; }
-.hp > b { position: absolute; inset: 0; text-align: center; font-size: 12px; line-height: 18px; font-weight: 900; text-shadow: 0 1px 2px #000; font-variant-numeric: tabular-nums; }
+.purse { position: relative; margin-top: 5px; padding-left: 13px; }
+/* the money bar: green banknotes for what's still owed; the paid part fills with gold coins */
+.hp { position: relative; height: 20px; border: 2px solid var(--line); border-radius: 6px; overflow: hidden;
+  background: radial-gradient(circle at 5px 5px, #ffe27a 0 2px, #e0a020 2px 3px, transparent 3.5px) 0 0 / 9px 9px,
+    radial-gradient(circle at 5px 5px, #ffe27a 0 2px, #c98a14 2px 3px, transparent 3.5px) 4px 4px / 9px 9px, #5a3a08; }
+.hp > i { position: relative; display: block; height: 100%; border-right: 2px solid #0e3a1e; transition: width 0.5s ease-out;
+  background: repeating-linear-gradient(90deg, transparent 0 13px, rgba(10, 50, 24, 0.55) 13px 14px), linear-gradient(#7ee08e, #3aa55a 45%, #23803e); }
+.hp > b { position: absolute; inset: 0; text-align: center; font-size: 12px; line-height: 16px; font-weight: 900; color: #fff; text-shadow: 0 1px 0 #000, 0 0 3px #000; font-variant-numeric: tabular-nums; }
 .hp .ph { position: absolute; top: 0; bottom: 0; width: 2px; background: rgba(0, 0, 0, 0.55); }
-.dots { position: absolute; left: 0; right: 0; bottom: 74px; display: flex; justify-content: center; gap: 6px; pointer-events: none; }
+.coin { position: absolute; left: 0; top: -2px; z-index: 1; width: 24px; height: 24px; display: grid; place-items: center; border: 2px solid var(--line); border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff3b0, #ffc94a 45%, #c98a14); color: #6a4204; font-size: 13px; font-weight: 900; box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.25); }
+.paid { display: flex; justify-content: space-between; gap: 8px; margin-top: 3px; padding-left: 13px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.paid em { font-style: normal; color: var(--gold); font-weight: 900; }
+.dots { position: absolute; left: 0; right: 0; top: 118px; display: flex; justify-content: center; gap: 6px; pointer-events: none; }
 .dots i { width: 8px; height: 8px; border-radius: 2px; background: rgba(255, 255, 255, 0.35); }
 .dots i.on { background: var(--gold); }
-.actions { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; gap: 8px; }
+.actions { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); width: min(62%, 240px); display: flex; flex-direction: column; gap: 6px; }
+.actions .btn { flex: none; }
+.actions #attack { font-size: 20px; letter-spacing: 0.04em; }
+.actions #info { min-height: 38px; font-size: 14px; }
 .btn { flex: 1; min-height: 48px; border: 2px solid var(--line); border-radius: 12px; font: inherit; font-weight: 900; font-size: 16px; color: var(--ink); background: linear-gradient(#4a62b8, #34479a); box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.25), 0 3px 0 var(--line); cursor: pointer; }
 .btn.primary { background: linear-gradient(#ffd25a, var(--gold-deep)); color: #2b1600; }
 .btn:active { transform: translateY(2px); }
@@ -81,7 +93,7 @@ figcaption b { color: var(--ink); display: block; }
 /* attacks */
 .stage { transform-origin: 50% 55%; will-change: transform; }
 .hp > u { position: absolute; left: 0; top: 0; bottom: 0; background: #fff3c4; transition: width 0.6s ease-in; }
-.hp > i { position: relative; }
+
 .banner { position: absolute; left: 0; right: 0; top: 27%; text-align: center; pointer-events: none; font-weight: 900; font-style: italic; letter-spacing: 0.02em; line-height: 1;
   color: #fff4c0; -webkit-text-stroke: 2px #2b1600; paint-order: stroke fill; text-shadow: 0 4px 0 #2b1600, 0 0 18px rgba(255, 190, 60, 0.7); animation: slam 1.5s cubic-bezier(.2, 1.4, .4, 1) forwards; }
 .banner.s1 { font-size: 26px; } .banner.s2 { font-size: 30px; } .banner.s3 { font-size: 34px; }
@@ -97,7 +109,7 @@ figcaption b { color: var(--ink); display: block; }
 .dmg.long { font-size: 34px; }
 .dmg small { display: block; text-align: center; font-size: 13px; color: #fff; }
 @keyframes rise2 { 0% { opacity: 0; transform: translate(-50%, 10px) scale(0.6); } 10% { opacity: 1; transform: translate(-50%, 0) scale(1.25); } 18% { transform: translate(-50%, 0) scale(1); } 80% { opacity: 1; transform: translate(-50%, -14px); } 100% { opacity: 0; transform: translate(-50%, -30px); } }
-.skip { position: absolute; right: 12px; bottom: 76px; font-size: 12px; color: rgba(255, 255, 255, 0.6); pointer-events: none; }
+.skip { position: absolute; left: 0; right: 0; text-align: center; bottom: 112px; font-size: 12px; color: rgba(255, 255, 255, 0.6); pointer-events: none; }
 .sheet { position: absolute; inset: 0; z-index: 5; display: flex; align-items: flex-end; background: rgba(4, 6, 16, 0.55); }
 .sheet[hidden] { display: none; }
 .sheet .card { width: 100%; margin: 8px; padding: 14px; background: var(--panel); border: 2px solid var(--line); border-radius: 16px; box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.5); }
@@ -141,7 +153,7 @@ figcaption b { color: var(--ink); display: block; }
         <div class="sheet" id="sheet" hidden>
           <form class="card" id="attackForm">
             <h3 id="sheetTitle">Attack</h3>
-            <p class="sub">Log a payment. The bigger the share of its HP, the bigger the attack.</p>
+            <p class="sub">Log a payment. The bigger the share of the debt, the bigger the attack.</p>
             <label for="amt">Payment</label>
             <input id="amt" inputmode="decimal" autocomplete="off" aria-describedby="tierName">
             <div class="chips" id="chips"></div>
@@ -150,7 +162,7 @@ figcaption b { color: var(--ink); display: block; }
           </form>
         </div>
         <div class="actions">
-          <button class="btn primary" id="attack">Attack (pay)</button>
+          <button class="btn primary" id="attack">Pay</button>
           <button class="btn" id="info">Details</button>
         </div>
       </div>
@@ -165,7 +177,9 @@ figcaption b { color: var(--ink); display: block; }
         <dt>Swiping</dt>
         <dd>Drag the scene, use the arrows or press ← →. The monster slides away and turns side-on as it goes, the scenery pans as if you turned your head, and the next one turns toward you as it arrives. Let go before a quarter of the width and it settles back.</dd>
         <dt>Attacking</dt>
-        <dd>Attack (pay) opens the payment form. Once it's saved, the attack plays: five tiers by the share of the monster's full HP the payment takes off, from a Slash to a Legendary Strike, and a finishing blow when the debt reaches zero. The HP bar drains with a trailing ghost bar, and new wounds show as each fifth of the debt is paid. Boss marks at 75/50/25% sit on the HP bar.</dd>
+        <dd>Pay opens the payment form. Once it's saved, the attack plays: five tiers by the share of the full debt (its highest balance) the payment takes off, from a Slash to a Legendary Strike, and a finishing blow when the debt reaches zero.</dd>
+        <dt>Money bar</dt>
+        <dd>Instead of a health bar: green banknotes for what's still owed. As you pay, it shrinks and the paid part fills with gold coins; under it, how much is paid of the total. New wounds show on the monster as each fifth is paid. Boss marks at 75/50/25% sit on the bar.</dd>
         <dt>What the art says</dt>
         <dd>Type from the peak balance (Slime under $500 up to Elder Dragon over $40k; a mortgage is a Castle). Colour from the interest rate: <span class="legend-chip" style="background:#3f9a52"></span>calm under 5%, <span class="legend-chip" style="background:#c0681c"></span>angry 5–15%, <span class="legend-chip" style="background:#a8262e"></span>furious 15%+. Frames read as rank: wood, iron, bronze, silver, gold, obsidian.</dd>
       </dl>
@@ -180,8 +194,8 @@ figcaption b { color: var(--ink); display: block; }
   </div>
 
   <h2>Attacks</h2>
-  <p>Paying a debt happens once or twice a month, so every payment is a staged moment. The tier comes from the share of the monster's full HP (its highest balance) the payment takes off. Play any of them on the phone above, on whichever monster you're facing.</p>
-  <div class="gallery"><table class="tiers" id="tiers"><thead><tr><th>Attack</th><th>Share of HP</th><th>Length</th><th>What happens</th><th></th></tr></thead><tbody></tbody></table></div>
+  <p>Paying a debt happens once or twice a month, so every payment is a staged moment. The tier comes from the share of the full debt (its highest balance) the payment takes off. Play any of them on the phone above, on whichever monster you're facing.</p>
+  <div class="gallery"><table class="tiers" id="tiers"><thead><tr><th>Attack</th><th>Share of the debt</th><th>Length</th><th>What happens</th><th></th></tr></thead><tbody></tbody></table></div>
   <div class="reacts">
     <div><b>Slime</b>: squashes flat and wobbles; goo flies, and big hits splat goo on your screen that drips off.</div>
     <div><b>Goblin</b>: knocked back a step, spinning; chips fly.</div>
@@ -392,7 +406,8 @@ function renderHud() {
     <div class="grow">
       <div class="name">${d.name}${d.boss ? '<span class="badge">BOSS</span>' : ''}</div>
       <small>${TEMPER_NAME[d.temper]} ${d.species} · ${d.apr}% APR</small>
-      <div class="hp" role="meter" aria-label="HP" aria-valuenow="${Math.round(pct)}" aria-valuemin="0" aria-valuemax="100"><u style="width:${pct}%"></u><i style="width:${pct}%"></i>${d.boss ? [75, 50, 25].map((p) => `<span class="ph" style="left:${p}%"></span>`).join('') : ''}<b>${money(d.balance)}</b></div>
+      <div class="purse"><span class="coin" aria-hidden="true">$</span><div class="hp" role="meter" aria-label="Still owed" aria-valuenow="${Math.round(pct)}" aria-valuemin="0" aria-valuemax="100" aria-valuetext="${money(d.balance)} owed"><u style="width:${pct}%"></u><i style="width:${pct}%"></i>${d.boss ? [75, 50, 25].map((p) => `<span class="ph" style="left:${p}%"></span>`).join('') : ''}<b>${money(d.balance)} owed</b></div></div>
+      <div class="paid"><span>Paid <em>${money(d.peak - d.balance)}</em> of ${money(d.peak)}</span><span>${Math.round(100 - pct)}%</span></div>
     </div>`;
   const pk = `p|${d.type}|${d.temper}|${dmgOf(d)}`;
   if (!cache.has(pk)) cache.set(pk, toCanvas(renderPortrait(d.type, d.temper, { size: 56, damage: dmgOf(d) })));
@@ -489,7 +504,7 @@ function updatePreview() {
   const tr = attackTier(cents, d.peak, d.balance);
   document.getElementById('tierStars').textContent = '★'.repeat(tr.stars) + '☆'.repeat(5 - tr.stars);
   document.getElementById('tierName').textContent = cents ? (tr.kill ? `${tr.name} + Final Blow` : tr.name) : 'Enter an amount';
-  document.getElementById('tierShare').textContent = cents ? `${(tr.share * 100).toFixed(tr.share < 0.1 ? 1 : 0)}% of its HP` : '';
+  document.getElementById('tierShare').textContent = cents ? `${(tr.share * 100).toFixed(tr.share < 0.1 ? 1 : 0)}% of the debt` : '';
   document.getElementById('strike').disabled = !cents;
 }
 function openSheet() {
@@ -564,7 +579,7 @@ function runAttack(now) {
     if (c.cue === 'hit') {
       // the main hit lands: damage counts up, the HP bar drains and a ghost bar follows
       document.getElementById('hud').classList.remove('away');
-      const el = popText(`dmg big s${tr.stars}${money(atk.cents).length > 9 ? ' long' : ''}`, `<span>−$0</span><small>${(tr.share * 100).toFixed(tr.share < 0.1 ? 1 : 0)}% of its HP</small>`, 2300);
+      const el = popText(`dmg big s${tr.stars}${money(atk.cents).length > 9 ? ' long' : ''}`, `<span>−$0</span><small>${(tr.share * 100).toFixed(tr.share < 0.1 ? 1 : 0)}% of the debt</small>`, 2300);
       const span = el.querySelector('span'), t0 = performance.now(), dur = 300 + tr.index * 180, hitCents = atk.cents;
       const count = () => {
         const k = Math.min(1, (performance.now() - t0) / dur);
@@ -580,8 +595,11 @@ function runAttack(now) {
       i.style.transitionDuration = `${0.3 + tr.index * 0.25}s`;
       i.style.width = `${pct}%`;
       setTimeout(() => { u.style.transitionDuration = `${0.5 + tr.index * 0.2}s`; u.style.width = `${pct}%`; }, 450 + tr.index * 150);
-      bar.querySelector('b').textContent = money(d.balance);
+      bar.querySelector('b').textContent = `${money(d.balance)} owed`;
       bar.setAttribute('aria-valuenow', Math.round(pct));
+      bar.setAttribute('aria-valuetext', `${money(d.balance)} owed`);
+      const paid = document.querySelector('#hud .paid');
+      paid.innerHTML = `<span>Paid <em>${money(d.peak - d.balance)}</em> of ${money(d.peak)}</span><span>${Math.round(100 - pct)}%</span>`;
       // a boss loses a phase when a 25% mark is crossed
       if (d.boss) {
         const before = Math.floor(((d.balance + atk.cents) / d.peak) * 4), after = Math.floor((d.balance / d.peak) * 4);
