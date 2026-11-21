@@ -19,7 +19,7 @@ export function emptyState() {
     app: APP_ID,
     version: SCHEMA_VERSION,
     createdAt: todayISO(),
-    settings: { currency: 'USD', strategy: 'avalanche', extraCents: null, lastBackup: null },
+    settings: { currency: 'USD', strategy: 'avalanche', extraCents: null, lastBackup: null, expectedIncome: null, setupDone: false },
     player: { xp: 0, days: [] },
     debts: [],
     ledger: [],
@@ -95,6 +95,9 @@ export function normalizeState(raw) {
       strategy: s.strategy === 'snowball' ? 'snowball' : 'avalanche',
       extraCents: isInt(s.extraCents) && s.extraCents >= 0 ? s.extraCents : null,
       lastBackup: isValidISO(s.lastBackup) ? s.lastBackup : null,
+      expectedIncome: isInt(s.expectedIncome) && s.expectedIncome > 0 ? s.expectedIncome : null,
+      // Saves from before setup existed count as set up if they hold any data.
+      setupDone: s.setupDone === true || (s.setupDone === undefined && arr(migrated.debts).length + arr(migrated.incomes).length > 0),
     },
     player: {
       xp: isInt(migrated.player?.xp) && migrated.player.xp >= 0 ? migrated.player.xp : 0,

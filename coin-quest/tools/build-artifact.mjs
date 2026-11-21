@@ -5,7 +5,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 const root = new URL('../', import.meta.url);
 const read = (p) => readFileSync(new URL(p, root), 'utf8');
-const ORDER = ['money', 'dates', 'debts', 'planner', 'budget', 'player', 'state', 'storage', 'sprites', 'ui', 'app'];
+const ORDER = ['money', 'dates', 'debts', 'planner', 'budget', 'player', 'state', 'storage', 'sprites', 'ui', 'chart', 'app'];
 
 const js = ORDER.map((name) => {
   const src = read(`js/${name}.js`)
@@ -17,9 +17,11 @@ const js = ORDER.map((name) => {
 
 const html = read('index.html');
 const body = html.match(/<body>([\s\S]*?)<script/)[1].trim();
+const fonts = html.match(/<!-- FONTS -->([\s\S]*?)<!-- \/FONTS -->/)[1].trim();
 const out = `<title>Coin Quest</title>
 <meta name="claude:viewport-fit-sides" content="cover">
-<meta name="theme-color" content="#1b142e">
+<meta name="theme-color" content="#121a3a">
+${fonts}
 <style>
 ${read('style.css')}
 </style>

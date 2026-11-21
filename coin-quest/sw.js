@@ -1,7 +1,7 @@
 // Service worker: makes the app open with no internet.
 // Strategy: serve from cache immediately, refresh the cache in the background (stale-while-revalidate).
 // Bump VERSION whenever the file list changes.
-const VERSION = 'v1';
+const VERSION = 'v2';
 const CACHE = `coin-quest-${VERSION}`;
 const FILES = [
   './',
@@ -10,6 +10,7 @@ const FILES = [
   './manifest.webmanifest',
   './js/app.js',
   './js/ui.js',
+  './js/chart.js',
   './js/budget.js',
   './js/dates.js',
   './js/debts.js',
