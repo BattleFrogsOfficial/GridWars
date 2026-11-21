@@ -11,7 +11,7 @@
 //   - scheduled one-off payments in the month they are planned for
 // Investments are held flat (no market growth is assumed).
 
-import { addMonths, daysInMonth, ymOf } from './dates.js';
+import { addMonths, daysInMonth, dueDateIn, ymOf } from './dates.js';
 import { accountEvents, totalsByType } from './accounts.js';
 import { balanceOf } from './debts.js';
 import { monthSummary, monthlyPlan } from './budget.js';
@@ -27,6 +27,18 @@ const sumBy = (arr, f) => arr.reduce((s, x) => s + f(x), 0);
 function scheduledSide(state, item) {
   const a = state.accounts.find((x) => x.id === item.accountId);
   return a?.type === 'savings' ? 'savings' : 'cash';
+}
+
+/** Dates after `today` (through month `endYm`) on which a planned payment happens; monthly ones repeat. */
+export function occurrences(item, today, endYm) {
+  const out = [];
+  let d = item.date;
+  for (let i = 0; i < 240 && ymOf(d) <= endYm; i++) {
+    if (d > today) out.push(d);
+    if (item.repeat !== 'monthly') break;
+    d = dueDateIn(addMonths(ymOf(d), 1), item.day || Number(d.slice(8)));
+  }
+  return out;
 }
 
 /**
@@ -79,7 +91,18 @@ export function moneyTimeline(state, today, { back = 5, ahead = 12, projections 
   const benched = liveNow.filter((x) => !x.d.include).map((x) => projectDebt(asDebt(x), {}, ahead + 1));
   const at = (tl, k) => tl[Math.min(k, tl.length - 1)] ?? 0;
   const paid = (r, k) => r.payments[k - 1] ?? 0; // exact amount the simulation paid in month k
-  const upcoming = state.scheduled.filter((x) => x.date > today);
+  const endYm = addMonths(now, ahead);
+  // Each planned payment's dates in the projection window. Debt payments only add what's above that debt's
+  // minimum, because the plan already pays the minimum every month.
+  const planned = state.scheduled.flatMap((x) => {
+    let amount = x.amount;
+    if (x.kind === 'debt') {
+      const live = liveNow.find((l) => l.d.id === x.debtId);
+      amount = live ? Math.max(0, x.amount - live.d.minPayment) : 0;
+    }
+    return amount ? occurrences(x, today, endYm).map((date) => ({ ...x, date, amount })) : [];
+  });
+  let extraDebtPaid = 0;
 
   let cash = out.cash[out.splitAt];
   let savings = out.savings[out.splitAt];
@@ -87,7 +110,8 @@ export function moneyTimeline(state, today, { back = 5, ahead = 12, projections 
   for (let k = 1; k <= ahead; k++) {
     const ym = addMonths(now, k);
     // Planned payments later this month land in the first projected month.
-    const sched = upcoming.filter((x) => (k === 1 ? ymOf(x.date) <= ym : ymOf(x.date) === ym));
+    const sched = planned.filter((x) => (k === 1 ? ymOf(x.date) <= ym : ymOf(x.date) === ym));
+    extraDebtPaid += sumBy(sched.filter((x) => x.kind === 'debt'), (x) => x.amount);
     const schedCash = sumBy(sched.filter((x) => scheduledSide(state, x) === 'cash'), (x) => x.amount);
     const schedSave = sumBy(sched.filter((x) => scheduledSide(state, x) === 'savings'), (x) => x.amount);
     const debtOut = paid(sim, k) + sumBy(benched, (b) => paid(b, k));
@@ -98,7 +122,7 @@ export function moneyTimeline(state, today, { back = 5, ahead = 12, projections 
     out.cash.push(cash);
     out.savings.push(savings);
     out.invest.push(invest);
-    out.debts.push(Math.max(0, at(sim.timeline, k) + sumBy(benched, (b) => at(b.timeline, k))));
+    out.debts.push(Math.max(0, at(sim.timeline, k) + sumBy(benched, (b) => at(b.timeline, k)) - extraDebtPaid));
     out.income.push(plan.income);
     out.spending.push(plan.fixed + debtOut + spendLines + schedCash + schedSave);
   }

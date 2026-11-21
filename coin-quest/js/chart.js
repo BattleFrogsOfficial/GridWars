@@ -22,11 +22,17 @@ export function lineChart(opts) {
   const all = opts.series.flatMap((s) => s.values);
   const max = Math.max(1, ...all);
   const min = Math.min(0, ...all); // projected balances can go below zero
-  const x = (i) => M.l + (i / Math.max(1, n - 1)) * (W - M.l - M.r);
+  // Optional empty room on the left so "Today" (index todayAt) sits about todayFraction of the way in.
+  const f = opts.todayFraction ?? 0;
+  const pad = opts.todayAt != null && f > 0 ? Math.max(0, Math.ceil((f * (n - 1) - opts.todayAt) / (1 - f))) : 0;
+  const span = Math.max(1, n - 1 + pad);
+  const x = (i) => M.l + ((i + pad) / span) * (W - M.l - M.r);
   const y = (v) => M.t + (1 - (v - min) / (max - min)) * (H - M.t - M.b);
   // Index from which values are projected (drawn dashed); none if absent.
   const split = opts.splitAt ?? n - 1;
-  charts.set(id, { ...opts, n, x, y, split });
+  charts.set(id, { ...opts, n, x, y, split, pad, span });
+  // Where the Today marker goes: an explicit index, else where actual data ends and projection begins.
+  const todayIdx = opts.todayAt ?? (split < n - 1 ? split : null);
 
   const grid = [min, (min + max) / 2, max, ...(min < 0 ? [0] : [])]
     .map((v) => `<line class="grid ${v === 0 && min < 0 ? 'zero' : ''}" x1="${M.l}" x2="${W - M.r}" y1="${y(v)}" y2="${y(v)}"/>`)
@@ -46,11 +52,14 @@ export function lineChart(opts) {
       return poly(s, 0, split, false) + poly(s, split, n - 1, true) + dot;
     })
     .join('');
-  const tickIdx = [...new Set([0, split < n - 1 && split > 0 ? split : Math.floor((n - 1) / 2), n - 1])];
+  // Bottom labels: start, today (labelled at the top instead), and end. With room on the left the start is today.
+  const tickIdx = [...new Set([pad && todayIdx === 0 ? null : 0, todayIdx != null && todayIdx > 0 ? null : Math.floor((n - 1) / 2), n - 1])].filter((i) => i != null);
   const ticks = tickIdx
     .map((i) => `<text class="tick" x="${x(i)}" y="${H - 8}" text-anchor="${i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle'}">${esc(opts.xLabel(i))}</text>`)
     .join('');
-  const nowLine = split < n - 1 ? `<line class="now" x1="${x(split)}" x2="${x(split)}" y1="${M.t}" y2="${H - M.b}"/>` : '';
+  const nowLine = todayIdx != null
+    ? `<line class="now" x1="${x(todayIdx)}" x2="${x(todayIdx)}" y1="${M.t}" y2="${H - M.b}"/><text class="tick today" x="${x(todayIdx)}" y="${M.t - 8}" text-anchor="middle">Today</text>`
+    : '';
 
   return `
     <div class="chart" id="${id}">
@@ -82,7 +91,7 @@ export function attachCharts(root) {
     const show = (ev) => {
       const r = svg.getBoundingClientRect();
       const px = ((ev.clientX - r.left) / r.width) * W;
-      const i = Math.max(0, Math.min(c.n - 1, Math.round(((px - M.l) / (W - M.l - M.r)) * (c.n - 1))));
+      const i = Math.max(0, Math.min(c.n - 1, Math.round(((px - M.l) / (W - M.l - M.r)) * c.span - c.pad)));
       const cx = c.x(i);
       cross.setAttribute('x1', cx);
       cross.setAttribute('x2', cx);

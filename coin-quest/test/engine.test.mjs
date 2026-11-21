@@ -308,3 +308,27 @@ test('money timeline: actual months then a projection that follows the budget an
   // Projections off: only actual months
   assert.equal(moneyTimeline(s, '2026-11-21', { projections: false }).months.length, 1);
 });
+
+test('planned debt payments: only the amount above the minimum is extra; monthly ones repeat', async () => {
+  const { moneyTimeline, occurrences } = await import('../js/projection.js');
+  assert.deepEqual(occurrences({ date: '2026-11-30', repeat: 'monthly', day: 31 }, '2026-11-21', '2027-02'), ['2026-11-30', '2027-01-31', '2027-02-28'].slice(0, 1).concat(['2026-12-31', '2027-01-31', '2027-02-28']));
+  assert.deepEqual(occurrences({ date: '2026-12-05', repeat: 'none' }, '2026-11-21', '2027-06'), ['2026-12-05']);
+  const s = emptyState();
+  s.settings.startMonth = '2026-11';
+  s.accounts.push({ id: 'chk', name: 'Checking', type: 'cash', start: 500000, createdAt: '2026-11-01' });
+  s.debts.push({ id: 'd', name: 'Card', type: 'credit', startBalance: 200000, apr: 0, minPayment: 10000, dueDay: 5, include: true, autoInterest: true, createdAt: '2026-11-01', accruedThrough: '2026-11-01' });
+  const base = moneyTimeline(s, '2026-11-21', { ahead: 3 });
+  // A monthly payment at exactly the minimum changes nothing (the plan already pays it)
+  s.scheduled.push({ id: 'm', kind: 'debt', name: 'Card', amount: 10000, date: '2026-12-05', debtId: 'd', accountId: 'chk', repeat: 'monthly', day: 5, categoryId: 'other' });
+  assert.deepEqual(moneyTimeline(s, '2026-11-21', { ahead: 3 }).debts, base.debts);
+  // A one-off $500 payment in December pays $400 extra
+  s.scheduled.push({ id: 'x', kind: 'debt', name: 'Card', amount: 50000, date: '2026-12-15', debtId: 'd', accountId: 'chk', repeat: 'none', day: null, categoryId: 'other' });
+  const t2 = moneyTimeline(s, '2026-11-21', { ahead: 3 });
+  assert.equal(base.debts[1] - t2.debts[1], 40000);
+  assert.equal(base.cash[1] - t2.cash[1], 40000);
+  assert.equal(base.debts[3] - t2.debts[3], 40000);
+  // normalize keeps debt payments with a valid debt only
+  const n = normalizeState(JSON.parse(JSON.stringify({ ...s, app: 'coin-quest', version: 4, scheduled: [...s.scheduled, { id: 'bad', kind: 'debt', amount: 5, date: '2026-12-01', debtId: 'gone' }] })));
+  assert.equal(n.scheduled.length, 2);
+  assert.equal(n.scheduled[0].repeat, 'monthly');
+});

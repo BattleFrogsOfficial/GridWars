@@ -6,7 +6,7 @@
 //   setup  – settings and first-run setup
 
 import { formatMoney, parseMoney, centsToInput } from './money.js';
-import { todayISO, ymOf, addMonths, monthLabel, dayLabel } from './dates.js';
+import { todayISO, ymOf, addMonths, monthLabel, dayLabel, dueDateIn } from './dates.js';
 import {
   DEBT_TYPES, ENTRY_KINDS, balancesById, speciesFor, temperFor, monthlyInterest, isRegenerating, pendingInterest,
 } from './debts.js';
@@ -196,7 +196,9 @@ function planView() {
         { key: 'plan', name: 'Your plan', color: SERIES_COLORS.plan, values: padTo(plan.timeline) },
         { key: 'baseline', name: 'Minimums only', color: SERIES_COLORS.baseline, values: padTo(baseline.timeline) },
       ],
-      xLabel: (i) => (i === 0 ? 'Now' : monthLabel(addMonths(now, i), { month: 'short', year: 'numeric' })),
+      todayAt: 0,
+      todayFraction: 0.2,
+      xLabel: (i) => (i === 0 ? 'Today' : monthLabel(addMonths(now, i), { month: 'short', year: 'numeric' })),
       yFmt: (v, full) => fmt(v, { compact: !full }),
       ariaLabel: `Total debt over time. Your plan reaches zero in ${monthsLabel(plan.months)}.`,
     });
@@ -427,7 +429,9 @@ function openProjection(id) {
     series.push({ key: 'baseline', name: 'Minimums only', color: SERIES_COLORS.baseline, values: pad(base.timeline) });
     $('.pj-chart').innerHTML = lineChart({
       series,
-      xLabel: (i) => (i === 0 ? 'Now' : monthLabel(addMonths(now, i), { month: 'short', year: 'numeric' })),
+      todayAt: 0,
+      todayFraction: 0.2,
+      xLabel: (i) => (i === 0 ? 'Today' : monthLabel(addMonths(now, i), { month: 'short', year: 'numeric' })),
       yFmt: (v, full) => fmt(v, { compact: !full }),
       ariaLabel: `${m.name} balance over time`,
     });
@@ -480,7 +484,8 @@ function spendView() {
       <button class="btn primary" data-action="add-payment" ${live.length ? '' : 'disabled'}>+ Debt payment</button>
       <button class="btn" data-action="add-debt">+ New debt</button>
       <button class="btn" data-action="add-charge" ${live.length ? '' : 'disabled'}>+ Charge on a debt</button>
-      <button class="btn wide-cell" data-action="add-scheduled">+ Plan a one-off payment</button>
+      <button class="btn" data-action="add-scheduled">+ Plan a purchase</button>
+      <button class="btn" data-action="plan-debt" ${live.length ? '' : 'disabled'}>+ Plan a debt payment</button>
     </div>
     ${upcomingCard()}
 
@@ -660,7 +665,9 @@ function moneyChartCard() {
     ? lineChart({
       series,
       splitAt: t.splitAt,
-      xLabel: (i) => (t.months[i] === now ? 'Now' : monthLabel(t.months[i], { month: 'short', year: '2-digit' })),
+      todayAt: t.splitAt,
+      todayFraction: 0.3,
+      xLabel: (i) => (t.months[i] === now ? 'This month' : monthLabel(t.months[i], { month: 'short', year: '2-digit' })),
       yFmt: (v, full) => fmt(v, { compact: !full }),
       ariaLabel: `${CHART_VIEWS[c.view].label} over time${c.projections ? ', with projections' : ''}`,
     })
@@ -1071,6 +1078,7 @@ function editDebt(m) {
         commit((s) => {
           s.debts = s.debts.filter((d) => d.id !== m.id);
           s.ledger = s.ledger.filter((e) => e.debtId !== m.id);
+          s.scheduled = s.scheduled.filter((x) => x.debtId !== m.id);
         });
       });
     },
@@ -1081,7 +1089,8 @@ function editDebt(m) {
  * Log a payment (attack) or a new charge. With debtId the debt is fixed; without it the form asks which debt.
  * `fromBattle` reopens the monster afterwards with the hit animation.
  */
-function logDebtEntry(kind, debtId = null, fromBattle = false) {
+/** prefill fills the form (used when a planned payment happens); onDone(state) runs inside the save. */
+function logDebtEntry(kind, debtId = null, fromBattle = false, prefill = {}, onDone = null) {
   const isAttack = kind === 'payment';
   const fixed = debtId ? monsters().find((m) => m.id === debtId) : null;
   const options = liveDebtOptions();
@@ -1092,10 +1101,10 @@ function logDebtEntry(kind, debtId = null, fromBattle = false) {
     intro: isAttack ? 'A payment you made. Every coin is damage.' : 'New spending or fees on a debt. It heals the monster.',
     fields: [
       ...(fixed ? [] : [{ name: 'debtId', label: 'Debt', type: 'select', options, value: options[0].value }]),
-      { name: 'amount', label: 'Amount', type: 'money', required: true, positive: true, value: isAttack ? Math.min(first.minPayment, first.balance) || '' : '' },
-      ...(isAttack ? withAccount('Paid from', ['cash', 'savings']) : []),
-      { name: 'date', label: 'Date', type: 'date', value: todayISO() },
-      { name: 'note', label: 'Note (optional)', type: 'text' },
+      { name: 'amount', label: 'Amount', type: 'money', required: true, positive: true, value: prefill.amount ?? (isAttack ? Math.min(first.minPayment, first.balance) || '' : '') },
+      ...(isAttack ? withAccount('Paid from', ['cash', 'savings']).map((f) => (prefill.accountId !== undefined ? { ...f, value: prefill.accountId || '' } : f)) : []),
+      { name: 'date', label: 'Date', type: 'date', value: prefill.date || todayISO() },
+      { name: 'note', label: 'Note (optional)', type: 'text', value: prefill.note || '' },
     ],
     submitLabel: isAttack ? 'Strike!' : 'Add charge',
     onSubmit: (v) => {
@@ -1106,6 +1115,7 @@ function logDebtEntry(kind, debtId = null, fromBattle = false) {
       commit((s) => {
         s.ledger.push({ id: uid(), debtId: m.id, kind, amount: isAttack ? -v.amount : v.amount, date: v.date, note: v.note || '', auto: false, accountId: isAttack ? v.accountId || null : null });
         markActive();
+        onDone?.(s);
         if (isAttack) {
           gainXp(attackXp(v.amount));
           const d = s.debts.find((x) => x.id === m.id);
@@ -1169,6 +1179,7 @@ function openDebt(id, hit = 0) {
     <div class="row-buttons">
       ${m.alive ? '<button class="btn primary" data-action="attack">Attack (pay)</button>' : ''}
       <button class="btn" data-action="scout">Update balance</button>
+      ${m.alive ? '<button class="btn" data-action="plan">Plan a payment</button>' : ''}
       <button class="btn" data-action="charge">+ Charge</button>
       <button class="btn" data-action="edit">Edit</button>
     </div>
@@ -1197,6 +1208,7 @@ function openDebt(id, hit = 0) {
       if (action === 'attack') logDebtEntry('payment', m.id, true);
       if (action === 'charge') logDebtEntry('charge', m.id, true);
       if (action === 'scout') scoutDebt(m);
+      if (action === 'plan') debtPaymentForm(null, m.id);
       if (action === 'edit') editDebt(m);
     },
   });
@@ -1280,18 +1292,21 @@ function upcomingCard() {
       <h2>Upcoming payments</h2>
       <ul class="rows">${items.map((x) => {
         const due = x.date <= today;
+        const debt = x.kind === 'debt' ? monsters().find((m) => m.id === x.debtId) : null;
+        const what = debt ? `Payment · ${x.repeat === 'monthly' ? 'every month' : 'one time'}` : catName(x.categoryId);
         return `
           <li class="${due ? 'due' : ''}">
             <button class="row-btn" data-action="edit-scheduled" data-id="${x.id}">
-              <span class="grow">${esc(x.name)}<small>${due ? 'Due ' : ''}${dayLabel(x.date)} · ${esc(catName(x.categoryId))}</small></span>
+              ${debt ? spriteCanvas(debt.species.key, debt.temper.key, 2) : ''}
+              <span class="grow">${esc(debt ? debt.name : x.name)}<small>${due ? 'Due ' : ''}${dayLabel(x.date)} · ${esc(what)}</small></span>
               <b>${fmt(x.amount)}</b>
             </button>
           </li>
           ${due ? `<li class="due-actions"><span class="grow">Did it happen?</span>
             <button class="btn primary" data-action="log-scheduled" data-id="${x.id}">Log it</button>
-            <button class="btn" data-action="skip-scheduled" data-id="${x.id}">Skip</button></li>` : ''}`;
+            <button class="btn" data-action="skip-scheduled" data-id="${x.id}">${x.repeat === 'monthly' ? 'Skip this one' : 'Skip'}</button></li>` : ''}`;
       }).join('')}</ul>
-      <p class="hint">Planned payments count in your projections. They become real spending when you log them.</p>
+      <p class="hint">Planned payments count in your projections. They become real when you log them. A debt payment above its minimum counts as extra.</p>
     </section>`;
 }
 
@@ -1326,7 +1341,69 @@ function scheduleForm(item = null) {
   });
 }
 
+const nextDueDate = (dueDay) => {
+  const today = todayISO();
+  const thisMonth = dueDateIn(ymOf(today), dueDay);
+  return thisMonth >= today ? thisMonth : dueDateIn(addMonths(ymOf(today), 1), dueDay);
+};
+
+/** A repeating payment moves to next month; a one-time payment (or one for a paid-off debt) is removed. */
+function advanceScheduled(s, id) {
+  const x = s.scheduled.find((y) => y.id === id);
+  if (!x) return;
+  const debtAlive = x.kind !== 'debt' || monsters().some((m) => m.id === x.debtId && m.alive);
+  if (x.repeat === 'monthly' && debtAlive) x.date = dueDateIn(addMonths(ymOf(x.date), 1), x.day || Number(x.date.slice(8)));
+  else s.scheduled = s.scheduled.filter((y) => y.id !== id);
+}
+
+function debtPaymentForm(item = null, debtId = null) {
+  const live = monsters().filter((m) => m.alive);
+  const first = live.find((m) => m.id === (item?.debtId || debtId)) || live[0];
+  if (!first) return toast('Add a debt first.');
+  const acct = withAccount('Pay from', ['cash', 'savings']);
+  if (item && acct[0]) acct[0].value = item.accountId || '';
+  openForm({
+    title: item ? `Edit payment to ${first.name}` : 'Plan a debt payment',
+    intro: 'Set when you will pay a card or loan. On the day, the app asks you to log it. Paying more than the minimum counts as extra in your projections.',
+    fields: [
+      ...(item || debtId ? [] : [{ name: 'debtId', label: 'Debt', type: 'select', options: live.map((m) => ({ value: m.id, label: `${m.name} (min ${fmt(m.minPayment)}, due day ${m.dueDay})` })), value: first.id }]),
+      { name: 'amount', label: 'Amount', type: 'money', required: true, positive: true, value: item?.amount ?? first.minPayment },
+      { name: 'date', label: 'Pay on', type: 'date', value: item?.date || nextDueDate(first.dueDay), hint: item || debtId ? '' : 'Leave this date to use the chosen debt\'s next due date.' },
+      { name: 'repeat', label: 'Repeat every month on this day', type: 'checkbox', value: item ? item.repeat === 'monthly' : true },
+      ...acct,
+    ],
+    submitLabel: item ? 'Save' : 'Plan it',
+    extra: item ? [{ label: 'Delete', action: 'delete', className: 'bad' }] : [],
+    onExtra: (_x, close) => {
+      close();
+      commit((s) => (s.scheduled = s.scheduled.filter((x) => x.id !== item.id)));
+    },
+    onSubmit: (v) => {
+      const debt = live.find((m) => m.id === (v.debtId || item?.debtId || debtId)) || first;
+      // A default date for the first debt in the list moves to the chosen debt's own due date.
+      const date = !item && !debtId && v.date === nextDueDate(first.dueDay) ? nextDueDate(debt.dueDay) : v.date;
+      const fields = {
+        kind: 'debt', name: debt.name, debtId: debt.id, amount: v.amount, date, categoryId: OTHER_CATEGORY_ID,
+        accountId: v.accountId || null, repeat: v.repeat ? 'monthly' : 'none', day: Number(date.slice(8)),
+      };
+      commit((s) => {
+        if (item) Object.assign(s.scheduled.find((x) => x.id === item.id), fields);
+        else s.scheduled.push({ id: uid(), note: '', ...fields });
+      });
+      toast(`${debt.name}: ${fmt(v.amount)} planned for ${dayLabel(date)}${v.repeat ? ', every month' : ''}.`);
+    },
+  });
+}
+
 function logScheduled(item) {
+  if (item.kind === 'debt') {
+    return logDebtEntry('payment', item.debtId, false, {
+      amount: Math.min(item.amount, monsters().find((m) => m.id === item.debtId)?.balance || item.amount),
+      date: item.date > todayISO() ? todayISO() : item.date,
+      accountId: item.accountId,
+      note: item.repeat === 'monthly' ? 'Planned monthly payment' : 'Planned payment',
+    }, (s) => advanceScheduled(s, item.id));
+  }
   addExpense(
     { title: `Log ${item.name}`, amount: item.amount, categoryId: item.categoryId, note: item.name, date: item.date > todayISO() ? todayISO() : item.date, accountId: item.accountId },
     (s) => (s.scheduled = s.scheduled.filter((x) => x.id !== item.id)),
@@ -1749,13 +1826,20 @@ function onClick(e) {
     'chart-view': () => commit((s) => (s.settings.chart.view = a.dataset.key)),
     'chart-show': () => commit((s) => (s.settings.chart[a.dataset.key] = !s.settings.chart[a.dataset.key])),
     'add-scheduled': () => scheduleForm(),
-    'edit-scheduled': () => scheduleForm(state.scheduled.find((x) => x.id === a.dataset.id)),
+    'edit-scheduled': () => {
+      const item = state.scheduled.find((x) => x.id === a.dataset.id);
+      if (item.kind === 'debt') debtPaymentForm(item);
+      else scheduleForm(item);
+    },
+    'plan-debt': () => debtPaymentForm(),
     'log-scheduled': () => logScheduled(state.scheduled.find((x) => x.id === a.dataset.id)),
     'skip-scheduled': async () => {
       const item = state.scheduled.find((x) => x.id === a.dataset.id);
-      if (await askConfirm(`Skip ${item.name}? It's removed from your plans and nothing is logged.`, { okLabel: 'Skip it', title: 'Skip payment?' })) {
-        commit((s) => (s.scheduled = s.scheduled.filter((x) => x.id !== item.id)));
-      }
+      const monthly = item.repeat === 'monthly';
+      const msg = monthly
+        ? `Skip this ${dayLabel(item.date)} payment to ${item.name}? Nothing is logged and the plan moves to next month.`
+        : `Skip ${item.name}? It's removed from your plans and nothing is logged.`;
+      if (await askConfirm(msg, { okLabel: 'Skip it', title: 'Skip payment?' })) commit((s) => advanceScheduled(s, item.id));
     },
     'edit-goals': editGoals,
     goto: () => go(a.dataset.tab),

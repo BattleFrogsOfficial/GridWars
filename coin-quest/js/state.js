@@ -35,7 +35,7 @@ export function emptyState() {
     expenses: [],
     accounts: [], // money you have: { id, name, type: cash|savings|invest, start, createdAt }
     moves: [], // money moving between accounts: { id, kind, from, to, amount, date, note }
-    scheduled: [], // planned one-off payments: { id, name, amount, date, categoryId, accountId }
+    scheduled: [], // planned payments: { id, kind: expense|debt, name, amount, date, categoryId, debtId, accountId, repeat: none|monthly, day }
   };
 }
 
@@ -160,8 +160,16 @@ export function normalizeState(raw) {
     accounts,
     moves: arr(migrated.moves).map((m) => normMove(m, acctIds)).filter(Boolean),
     scheduled: arr(migrated.scheduled)
-      .map((e) => normMoneyEntry(e, (x) => ({ name: str(x.name, 60) || 'Planned payment', categoryId: catIds.has(x.categoryId) ? x.categoryId : OTHER_CATEGORY_ID, accountId: acct(x.accountId) })))
-      .filter(Boolean),
+      .map((e) => normMoneyEntry(e, (x) => ({
+        kind: x.kind === 'debt' ? 'debt' : 'expense',
+        name: str(x.name, 60) || 'Planned payment',
+        categoryId: catIds.has(x.categoryId) ? x.categoryId : OTHER_CATEGORY_ID,
+        debtId: x.kind === 'debt' && debtIds.has(x.debtId) ? x.debtId : null,
+        accountId: acct(x.accountId),
+        repeat: x.kind === 'debt' && x.repeat === 'monthly' ? 'monthly' : 'none',
+        day: isInt(x.day) && x.day >= 1 && x.day <= 31 ? x.day : null,
+      })))
+      .filter((e) => e && (e.kind !== 'debt' || e.debtId)),
   };
 }
 

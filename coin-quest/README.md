@@ -27,7 +27,7 @@ It installs from the website ("Add to Home Screen") and works offline. All data 
 | Budget link | The "Extra debt payments" line is the extra paid on top of minimums in the plan. Debt payments above the minimums count against it automatically |
 | Current situation | Accounts (cash, savings, invested) with a starting balance; income, expenses, debt payments, paydays, bills and transfers move them, "Update balance" records a correction. Chart of each type over time |
 | Money over time | Chart on the Budget tab: Checking, Savings or Income view; optional 12-month projection (dashed) that assumes the budget is followed, including planned one-off payments |
-| Planned payments | One-off future payments (e.g. Black Friday) on the Spending tab. They count in projections and become real expenses when logged |
+| Planned payments | One-off purchases (e.g. Black Friday) and debt payments (one time or every month) on the Spending tab or a debt's sheet. They count in projections (a debt payment only adds what's above its minimum) and become real when logged; monthly ones then roll to next month |
 | Save | One JSON document in IndexedDB. Backup = download that JSON; restore validates it first |
 
 ## Files
