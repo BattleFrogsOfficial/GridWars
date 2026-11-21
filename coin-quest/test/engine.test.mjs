@@ -180,7 +180,7 @@ test('normalizeState rejects foreign files, cleans bad values and migrates v1', 
   assert.throws(() => normalizeState({ app: 'coin-quest', version: 99 }));
   const s = normalizeState({
     app: 'coin-quest',
-    version: 2,
+    version: 3,
     debts: [{ id: 'a', startBalance: 1000, apr: -5, dueDay: 40, type: 'spaceship' }, { id: 'bad' }],
     ledger: [{ id: 'l', debtId: 'a', kind: 'payment', amount: -100, date: '2026-01-01' }, { id: 'm', debtId: 'zzz', kind: 'payment', amount: 1, date: '2026-01-01' }],
     categories: [{ id: 'x', name: 'X', limit: 1.5, target: -3 }],
@@ -207,7 +207,7 @@ test('normalizeState rejects foreign files, cleans bad values and migrates v1', 
   });
   assert.deepEqual(v1.categories.map((c) => [c.id, c.limit]), [['food', 0], ['debt-attack', 0]]);
   assert.equal(v1.settings.setupDone, true);
-  assert.equal(v1.version, 2);
+  assert.equal(v1.version, 3);
 });
 
 test('sprites are rectangular grids', () => {
@@ -239,4 +239,40 @@ test('projectDebt scenarios', async () => {
   assert.equal(miss.totalPaid, 100000 + miss.totalInterest + miss.totalFees);
   // Payment below interest never finishes
   assert.equal(projectDebt({ balance: 1000000, apr: 30, minPayment: 10000 }).feasible, false);
+});
+
+test('account balances follow every input, ignore events before an account existed, and support overrides', async () => {
+  const { accountBalances, totalsByType, balanceHistory, accountActivity } = await import('../js/accounts.js');
+  const s = emptyState();
+  s.categories.push({ id: 'ef', name: 'Emergency fund', kind: 'savings', limit: 10000, target: null });
+  s.accounts.push({ id: 'chk', name: 'Checking', type: 'cash', start: 100000, createdAt: '2026-11-01' });
+  s.accounts.push({ id: 'sav', name: 'Savings', type: 'savings', start: 500000, createdAt: '2026-11-01' });
+  s.accounts.push({ id: 'ira', name: 'IRA', type: 'invest', start: 1000000, createdAt: '2026-11-10' });
+  s.incomes.push({ id: 'i', amount: 20000, date: '2026-11-05', source: 'Bonus', accountId: 'chk' });
+  s.incomes.push({ id: 'old', amount: 99999, date: '2026-10-05', source: 'Before', accountId: 'chk' }); // before account: ignored
+  s.expenses.push({ id: 'e', amount: 5000, date: '2026-11-06', categoryId: 'other', accountId: 'chk', toAccountId: null });
+  s.expenses.push({ id: 's', amount: 10000, date: '2026-11-07', categoryId: 'ef', accountId: 'chk', toAccountId: 'sav' });
+  s.debts.push({ id: 'd', name: 'Visa', startBalance: 100000 });
+  s.ledger.push({ id: 'p', debtId: 'd', kind: 'payment', amount: -15000, date: '2026-11-08', accountId: 'chk' });
+  s.moves.push({ id: 'm1', kind: 'payday', from: null, to: 'chk', amount: 200000, date: '2026-11-14' });
+  s.moves.push({ id: 'm2', kind: 'bill', from: 'chk', to: null, amount: 150000, date: '2026-11-15' });
+  s.moves.push({ id: 'm3', kind: 'transfer', from: 'chk', to: 'ira', amount: 10000, date: '2026-11-16' });
+  s.moves.push({ id: 'm4', kind: 'update', from: null, to: 'ira', amount: 25000, date: '2026-11-20' }); // market gain
+  const bal = accountBalances(s);
+  assert.equal(bal.get('chk'), 100000 + 20000 - 5000 - 10000 - 15000 + 200000 - 150000 - 10000);
+  assert.equal(bal.get('sav'), 510000);
+  assert.equal(bal.get('ira'), 1035000);
+  const t = totalsByType(s, '2026-11-09');
+  assert.equal(t.invest, 0); // IRA not added yet
+  assert.equal(t.cash, 100000 + 20000 - 5000 - 10000 - 15000);
+  const h = balanceHistory(s, '2026-11-21');
+  assert.equal(h.dates[0], '2026-11-01');
+  assert.equal(h.dates.at(-1), '2026-11-21');
+  assert.equal(h.total.at(-1), bal.get('chk') + bal.get('sav') + bal.get('ira'));
+  assert.equal(accountActivity(s, 'chk')[0].label, 'Moved money');
+  // normalize keeps valid links and drops broken ones
+  const n = normalizeState(JSON.parse(JSON.stringify({ ...s, app: 'coin-quest', version: 3, moves: [...s.moves, { id: 'x', kind: 'transfer', from: 'nope', to: null, amount: 5, date: '2026-11-01' }] })));
+  assert.equal(n.moves.length, 4);
+  assert.equal(n.expenses.find((e) => e.id === 's').toAccountId, 'sav');
+  assert.equal(accountBalances(n).get('chk'), bal.get('chk'));
 });

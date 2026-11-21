@@ -4,9 +4,10 @@
 
 import { CATEGORY_KINDS, FREQUENCIES, OTHER_CATEGORY_ID } from './budget.js';
 import { DEBT_TYPES, ENTRY_KINDS } from './debts.js';
+import { ACCOUNT_TYPES, MOVE_KINDS } from './accounts.js';
 import { isValidISO, todayISO } from './dates.js';
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 export const APP_ID = 'coin-quest';
 
 export function uid() {
@@ -29,6 +30,8 @@ export function emptyState() {
     categories: [], // allocations of what's left over: { id, name, kind, limit, target? }
     incomes: [], // one-off extra income
     expenses: [],
+    accounts: [], // money you have: { id, name, type: cash|savings|invest, start, createdAt }
+    moves: [], // money moving between accounts: { id, kind, from, to, amount, date, note }
   };
 }
 
@@ -54,10 +57,29 @@ function normDebt(d) {
   };
 }
 
+function normAccount(a) {
+  if (!a || typeof a.id !== 'string' || !isInt(a.start)) return null;
+  return {
+    id: a.id,
+    name: str(a.name, 40) || 'Account',
+    type: a.type in ACCOUNT_TYPES ? a.type : 'cash',
+    start: a.start,
+    createdAt: isValidISO(a.createdAt) ? a.createdAt : todayISO(),
+  };
+}
+
+function normMove(m, acctIds) {
+  if (!m || typeof m.id !== 'string' || !(m.kind in MOVE_KINDS) || !isInt(m.amount) || !isValidISO(m.date)) return null;
+  const from = acctIds.has(m.from) ? m.from : null;
+  const to = acctIds.has(m.to) ? m.to : null;
+  if (m.kind === 'update' ? !to : !(from || to) || m.amount <= 0) return null;
+  return { id: m.id, kind: m.kind, from: m.kind === 'update' ? null : from, to, amount: m.amount, date: m.date, note: str(m.note, 80) };
+}
+
 function normEntry(e, debtIds) {
   if (!e || typeof e.id !== 'string' || !debtIds.has(e.debtId) || !isInt(e.amount) || !isValidISO(e.date)) return null;
   if (!(e.kind in ENTRY_KINDS)) return null;
-  return { id: e.id, debtId: e.debtId, kind: e.kind, amount: e.amount, date: e.date, note: str(e.note, 140), auto: e.auto === true };
+  return { id: e.id, debtId: e.debtId, kind: e.kind, amount: e.amount, date: e.date, note: str(e.note, 140), auto: e.auto === true, accountId: typeof e.accountId === 'string' ? e.accountId : null };
 }
 
 function normCategory(c) {
@@ -90,6 +112,9 @@ export function normalizeState(raw) {
   const base = emptyState();
 
   const debts = arr(migrated.debts).map(normDebt).filter(Boolean);
+  const accounts = arr(migrated.accounts).map(normAccount).filter(Boolean);
+  const acctIds = new Set(accounts.map((a) => a.id));
+  const acct = (id) => (acctIds.has(id) ? id : null);
   const debtIds = new Set(debts.map((d) => d.id));
   const categories = arr(migrated.categories).map(normCategory).filter(Boolean);
   const catIds = new Set([...categories.map((c) => c.id), OTHER_CATEGORY_ID]);
@@ -115,12 +140,14 @@ export function normalizeState(raw) {
     incomeSources: arr(migrated.incomeSources).map(normRecurring).filter(Boolean),
     bills: arr(migrated.bills).map(normRecurring).filter(Boolean),
     debts,
-    ledger: arr(migrated.ledger).map((e) => normEntry(e, debtIds)).filter(Boolean),
+    ledger: arr(migrated.ledger).map((e) => normEntry(e, debtIds)).filter(Boolean).map((e) => ({ ...e, accountId: acct(e.accountId) })),
     categories,
-    incomes: arr(migrated.incomes).map((e) => normMoneyEntry(e, (x) => ({ source: str(x.source, 40) }))).filter(Boolean),
+    incomes: arr(migrated.incomes).map((e) => normMoneyEntry(e, (x) => ({ source: str(x.source, 40), accountId: acct(x.accountId) }))).filter(Boolean),
     expenses: arr(migrated.expenses)
-      .map((e) => normMoneyEntry(e, (x) => ({ categoryId: x.categoryId })))
+      .map((e) => normMoneyEntry(e, (x) => ({ categoryId: x.categoryId, accountId: acct(x.accountId), toAccountId: acct(x.toAccountId) })))
       .filter((e) => e && catIds.has(e.categoryId)),
+    accounts,
+    moves: arr(migrated.moves).map((m) => normMove(m, acctIds)).filter(Boolean),
   };
 }
 
@@ -138,6 +165,10 @@ function migrate(raw) {
     s.bills = [];
     if (s.settings?.setupDone === undefined) s.settings = { ...s.settings, setupDone: arr(s.debts).length > 0 };
     s.version = 2;
+  }
+  if (s.version === 2) {
+    // v3 adds accounts (cash, savings, invested) and moves between them. Nothing to convert.
+    s.version = 3;
   }
   return s;
 }

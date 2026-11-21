@@ -20,6 +20,7 @@ import { loadState, saveState, requestPersistence, downloadBackup, readBackup } 
 import { drawSprite } from './sprites.js';
 import { esc, toast, openSheet, openForm, askConfirm } from './ui.js';
 import { lineChart, attachCharts, SERIES_COLORS } from './chart.js';
+import { ACCOUNT_TYPES, accountEvents, accountBalances, totalsByType, balanceHistory, accountActivity } from './accounts.js';
 
 let state = emptyState();
 const ui = { month: ymOf(todayISO()), persisted: null, installPrompt: null };
@@ -563,6 +564,211 @@ function battleView() {
     ${dead.length ? `<h2 class="section-h">Trophies</h2>${dead.map(monsterCard).join('')}` : ''}`;
 }
 
+// ---------- money you have (current situation) ----------
+
+const TYPE_OPTIONS = Object.entries(ACCOUNT_TYPES).map(([value, label]) => ({ value, label }));
+const TYPE_COLORS = { cash: '#7a8ae6', savings: '#199e70', invest: '#c07d18' }; // validated as a set on the card surface
+
+/** A select field for choosing an account, defaulting to the first cash account. */
+function accountField(label, types = ['cash', 'savings', 'invest'], name = 'accountId') {
+  const opts = state.accounts.filter((a) => types.includes(a.type));
+  const bal = accountBalances(state);
+  return {
+    name, label, type: 'select',
+    value: (opts.find((a) => a.type === 'cash') || opts[0])?.id || '',
+    options: [...opts.map((a) => ({ value: a.id, label: `${a.name} · ${fmt(bal.get(a.id))}` })), { value: '', label: "Don't track" }],
+  };
+}
+const withAccount = (label, types) => (state.accounts.length ? [accountField(label, types)] : []);
+
+function situationCard() {
+  if (!state.accounts.length) {
+    return `
+      <section class="card tip">
+        <h2>Current situation</h2>
+        <p>Add what you have right now in cash, savings and investments. Everything you log keeps it up to date from then on.</p>
+        <button class="btn primary wide" data-action="add-account">+ Add an account</button>
+      </section>`;
+  }
+  const events = accountEvents(state);
+  const bal = accountBalances(state, null, events);
+  const t = totalsByType(state, null, events);
+  const owed = monsters().filter((m) => m.alive).reduce((s, m) => s + m.balance, 0);
+  const h = balanceHistory(state, todayISO());
+  const types = Object.keys(ACCOUNT_TYPES).filter((k) => state.accounts.some((a) => a.type === k));
+  const chart = h.dates.length >= 2
+    ? lineChart({
+      series: types.map((k) => ({ key: k, name: ACCOUNT_TYPES[k], color: TYPE_COLORS[k], values: h[k] })),
+      xLabel: (i) => (i === h.dates.length - 1 ? 'Today' : dayLabel(h.dates[i])),
+      yFmt: (v, full) => fmt(v, { compact: !full }),
+      ariaLabel: 'Cash, savings and investments over time',
+    })
+    : '<p class="hint">The chart fills in as the days go by.</p>';
+
+  return `
+    <section class="card">
+      <h2>Current situation</h2>
+      <div class="worth">
+        <div><small>You have</small><div class="big">${fmt(t.total)}</div></div>
+        ${owed ? `<div class="worth-net"><small>Debts ${fmt(owed)} · Net worth</small><b class="${t.total - owed < 0 ? 'bad' : ''}">${fmt(t.total - owed)}</b></div>` : ''}
+      </div>
+      <div class="stats">
+        ${Object.entries(ACCOUNT_TYPES).map(([k, l]) => `<div><small><i class="sw" style="background:${TYPE_COLORS[k]}"></i>${l}</small><b>${fmt(t[k])}</b></div>`).join('')}
+      </div>
+      ${chart}
+      <ul class="rows">${state.accounts.map((a) => `
+        <li><button class="row-btn" data-action="open-account" data-id="${a.id}">
+          <i class="sw" style="background:${TYPE_COLORS[a.type]}"></i>
+          <span class="grow">${esc(a.name)}<small>${ACCOUNT_TYPES[a.type]}</small></span>
+          <b class="${bal.get(a.id) < 0 ? 'bad' : ''}">${fmt(bal.get(a.id))}</b><span class="chev" aria-hidden="true">›</span>
+        </button></li>`).join('')}</ul>
+      <div class="action-grid">
+        <button class="btn" data-action="payday">+ Payday</button>
+        <button class="btn" data-action="pay-bill">+ Bill paid</button>
+        <button class="btn" data-action="move-money" ${state.accounts.length > 1 ? '' : 'disabled'}>Move money</button>
+        <button class="btn" data-action="add-account">+ Account</button>
+      </div>
+      <p class="hint">Balances change when you log income, expenses and debt payments. If one drifts from your bank, tap it and choose Update balance.</p>
+    </section>`;
+}
+
+function accountForm(a = null) {
+  openForm({
+    title: a ? `Edit ${a.name}` : 'Add an account',
+    intro: a ? 'To change the balance, use Update balance instead.' : 'A bank account, cash, savings or an investment account like a 401(k), IRA or brokerage.',
+    fields: [
+      { name: 'name', label: 'Name', type: 'text', required: true, value: a?.name || '', placeholder: 'e.g. Checking' },
+      { name: 'type', label: 'Type', type: 'select', options: TYPE_OPTIONS, value: a?.type || 'cash' },
+      ...(a ? [] : [{ name: 'start', label: 'Balance today', type: 'money', required: true }]),
+    ],
+    extra: a ? [{ label: 'Delete', action: 'delete', className: 'bad' }] : [],
+    onExtra: (_x, close) => {
+      askConfirm(`Delete ${a.name}? Its history is removed. Expenses and payments logged from it stay in your budget.`, { okLabel: 'Delete', danger: true }).then((ok) => {
+        if (!ok) return;
+        close();
+        commit((s) => {
+          s.accounts = s.accounts.filter((x) => x.id !== a.id);
+          s.moves = s.moves
+            .map((m) => ({ ...m, from: m.from === a.id ? null : m.from, to: m.to === a.id ? null : m.to }))
+            .filter((m) => (m.kind === 'update' ? m.to : m.from || m.to));
+          for (const list of [s.incomes, s.expenses, s.ledger]) {
+            for (const e of list) {
+              if (e.accountId === a.id) e.accountId = null;
+              if (e.toAccountId === a.id) e.toAccountId = null;
+            }
+          }
+        });
+      });
+    },
+    onSubmit: (v) => {
+      commit((s) => {
+        if (a) Object.assign(s.accounts.find((x) => x.id === a.id), { name: v.name, type: v.type });
+        else s.accounts.push({ id: uid(), name: v.name, type: v.type, start: v.start, createdAt: todayISO() });
+      });
+    },
+  });
+}
+
+function updateBalance(a) {
+  const current = accountBalances(state).get(a.id);
+  openForm({
+    title: `Update ${a.name}`,
+    intro: `The app shows <b>${fmt(current)}</b>. Enter the real balance from your bank or statement; the difference is recorded so nothing else changes.`,
+    fields: [
+      { name: 'balance', label: 'Real balance', type: 'money', required: true, value: current },
+      { name: 'note', label: 'Reason (optional)', type: 'text', placeholder: a.type === 'invest' ? 'e.g. Market change' : 'e.g. Bank fee' },
+    ],
+    submitLabel: 'Update',
+    onSubmit: (v) => {
+      const delta = v.balance - current;
+      if (!delta) return;
+      commit((s) => s.moves.push({ id: uid(), kind: 'update', from: null, to: a.id, amount: delta, date: todayISO(), note: v.note || '' }));
+      toast(`${a.name} updated to ${fmt(v.balance)}.`);
+    },
+  });
+}
+
+function openAccount(id) {
+  const a = state.accounts.find((x) => x.id === id);
+  if (!a) return;
+  const balance = accountBalances(state).get(id);
+  const acts = accountActivity(state, id);
+  const sheet = openSheet(`
+    <h2>${esc(a.name)}</h2>
+    <p class="hint">${ACCOUNT_TYPES[a.type]} · added ${dayLabel(a.createdAt)}</p>
+    <div class="big ${balance < 0 ? 'bad' : ''}">${fmt(balance)}</div>
+    <div class="row-buttons">
+      <button class="btn primary" data-action="update">Update balance</button>
+      ${state.accounts.length > 1 ? '<button class="btn" data-action="move">Move money</button>' : ''}
+      <button class="btn" data-action="edit">Edit</button>
+    </div>
+    <h3>Activity</h3>
+    <ul class="log">
+      ${acts.slice(0, 60).map((ev) => `
+        <li class="${ev.amount > 0 ? 'income' : ''}"><span class="grow">${esc(ev.label)}<small>${dayLabel(ev.date)}</small></span>
+          <b>${ev.amount > 0 ? '+' : '−'}${fmt(Math.abs(ev.amount))}</b></li>`).join('')}
+      <li><span class="grow">Starting balance<small>${dayLabel(a.createdAt)}</small></span><b>${fmt(a.start)}</b></li>
+    </ul>
+    <p class="hint">To remove an item, delete it where it was logged (Spending or Budget tab).</p>`, {
+    onAction: (action, _el, { close }) => {
+      close();
+      if (action === 'update') updateBalance(a);
+      if (action === 'move') moveMoney(a.id);
+      if (action === 'edit') accountForm(a);
+    },
+  });
+  return sheet;
+}
+
+/** Payday or bill: money arriving from a recurring income source, or leaving for a recurring bill. */
+function recordRecurring(kind) {
+  const isPay = kind === 'payday';
+  const list = isPay ? state.incomeSources : state.bills;
+  openForm({
+    title: isPay ? 'Record a payday' : 'Record a bill paid',
+    intro: isPay
+      ? 'Money from a regular income source arriving in an account. Your monthly budget already counts it, so this only updates the account.'
+      : 'A regular bill leaving an account. Your monthly budget already counts it, so this only updates the account.',
+    fields: [
+      ...(list.length ? [{ name: 'src', label: isPay ? 'Income source' : 'Bill', type: 'select', options: list.map((x) => ({ value: x.id, label: `${x.name} (${fmt(x.amount)} ${freqLabel(x.freq)})` })), value: list[0].id }] : []),
+      { name: 'amount', label: 'Amount', type: 'money', hint: list.length ? 'Leave blank to use the usual amount.' : '' , required: !list.length, positive: true },
+      accountField(isPay ? 'Into' : 'Paid from', isPay ? ['cash', 'savings', 'invest'] : ['cash', 'savings']),
+      { name: 'date', label: 'Date', type: 'date', value: todayISO() },
+    ],
+    onSubmit: (v) => {
+      const src = list.find((x) => x.id === v.src);
+      const amount = v.amount || src?.amount;
+      if (!amount) return 'Enter an amount.';
+      if (!v.accountId) return 'Pick an account.';
+      commit((s) => {
+        s.moves.push({ id: uid(), kind, from: isPay ? null : v.accountId, to: isPay ? v.accountId : null, amount, date: v.date, note: src?.name || '' });
+        markActive();
+      });
+      toast(isPay ? `+${fmt(amount)} payday recorded.` : `${fmt(amount)} bill recorded.`);
+    },
+  });
+}
+
+function moveMoney(fromId = null) {
+  const from = accountField('From');
+  const to = accountField('To', ['cash', 'savings', 'invest'], 'toId');
+  from.options = from.options.filter((o) => o.value);
+  to.options = to.options.filter((o) => o.value);
+  if (fromId) from.value = fromId;
+  to.value = (state.accounts.find((a) => a.id !== from.value && a.type !== 'cash') || state.accounts.find((a) => a.id !== from.value))?.id;
+  openForm({
+    title: 'Move money',
+    intro: 'Between your own accounts, like checking to savings or savings to an investment account.',
+    fields: [from, to, { name: 'amount', label: 'Amount', type: 'money', required: true, positive: true }, { name: 'date', label: 'Date', type: 'date', value: todayISO() }, { name: 'note', label: 'Note (optional)', type: 'text' }],
+    submitLabel: 'Move',
+    onSubmit: (v) => {
+      if (v.accountId === v.toId) return 'Pick two different accounts.';
+      commit((s) => s.moves.push({ id: uid(), kind: 'transfer', from: v.accountId, to: v.toId, amount: v.amount, date: v.date, note: v.note || '' }));
+      toast(`Moved ${fmt(v.amount)}.`);
+    },
+  });
+}
+
 // ---------- tab 4: income & budget ----------
 
 const GOALS = {
@@ -582,7 +788,7 @@ function recurringRows(list) {
 }
 
 function budgetView() {
-  if (!state.settings.setupDone && !state.incomeSources.length) {
+  if (!state.settings.setupDone && !state.incomeSources.length && !state.accounts.length) {
     return `
       ${header('Income &amp; budget')}
       <section class="card empty-card">
@@ -607,7 +813,8 @@ function budgetView() {
   };
 
   return `
-    ${header('Income &amp; budget', 'What comes in, what goes out, where the rest goes')}
+    ${header('Income &amp; budget', 'What you have, what comes in, where it goes')}
+    ${situationCard()}
     <section class="card">
       <h2>Every month</h2>
       <ul class="flow">
@@ -838,6 +1045,7 @@ function logDebtEntry(kind, debtId = null, fromBattle = false) {
     fields: [
       ...(fixed ? [] : [{ name: 'debtId', label: 'Debt', type: 'select', options, value: options[0].value }]),
       { name: 'amount', label: 'Amount', type: 'money', required: true, positive: true, value: isAttack ? Math.min(first.minPayment, first.balance) || '' : '' },
+      ...(isAttack ? withAccount('Paid from', ['cash', 'savings']) : []),
       { name: 'date', label: 'Date', type: 'date', value: todayISO() },
       { name: 'note', label: 'Note (optional)', type: 'text' },
     ],
@@ -848,7 +1056,7 @@ function logDebtEntry(kind, debtId = null, fromBattle = false) {
       if (v.date > todayISO()) return 'Pick today or an earlier date.';
       let killed = false;
       commit((s) => {
-        s.ledger.push({ id: uid(), debtId: m.id, kind, amount: isAttack ? -v.amount : v.amount, date: v.date, note: v.note || '', auto: false });
+        s.ledger.push({ id: uid(), debtId: m.id, kind, amount: isAttack ? -v.amount : v.amount, date: v.date, note: v.note || '', auto: false, accountId: isAttack ? v.accountId || null : null });
         markActive();
         if (isAttack) {
           gainXp(attackXp(v.amount));
@@ -961,11 +1169,12 @@ function addIncome() {
     fields: [
       { name: 'amount', label: 'Amount', type: 'money', required: true, positive: true },
       { name: 'source', label: 'What was it?', type: 'text', placeholder: 'e.g. Bonus' },
+      ...withAccount('Into'),
       { name: 'date', label: 'Date', type: 'date', value: todayISO() },
     ],
     onSubmit: (v) => {
       commit((s) => {
-        s.incomes.push({ id: uid(), amount: v.amount, source: v.source || '', date: v.date, note: '' });
+        s.incomes.push({ id: uid(), amount: v.amount, source: v.source || '', date: v.date, note: '', accountId: v.accountId || null });
         markActive();
         gainXp(XP.log);
       });
@@ -981,16 +1190,19 @@ function addExpense() {
   ];
   openForm({
     title: 'Log expense',
-    intro: 'Pick the budget line it comes from. Money you put into savings counts here too. For debt payments use “+ Debt payment”.',
+    intro: `Pick the budget line it comes from. For debt payments use “+ Debt payment”.${state.accounts.some((a) => a.type === 'savings') ? ' Money logged to a savings line moves into your savings account.' : ''}`,
     fields: [
       { name: 'amount', label: 'Amount', type: 'money', required: true, positive: true },
       { name: 'categoryId', label: 'Budget line', type: 'select', options, value: options[0].value },
+      ...withAccount('Paid from', ['cash', 'savings']),
       { name: 'note', label: 'Note (optional)', type: 'text' },
       { name: 'date', label: 'Date', type: 'date', value: todayISO() },
     ],
     onSubmit: (v) => {
+      const isSaving = state.categories.find((c) => c.id === v.categoryId)?.kind === 'savings';
+      const savingsAcct = isSaving ? state.accounts.find((a) => a.type === 'savings' && a.id !== v.accountId)?.id || null : null;
       commit((s) => {
-        s.expenses.push({ id: uid(), amount: v.amount, categoryId: v.categoryId, note: v.note || '', date: v.date });
+        s.expenses.push({ id: uid(), amount: v.amount, categoryId: v.categoryId, note: v.note || '', date: v.date, accountId: v.accountId || null, toAccountId: savingsAcct });
         markActive();
         gainXp(XP.log);
       });
@@ -1086,7 +1298,8 @@ function editGoals() {
 
 const BILL_PRESETS = ['Rent', 'Car lease', 'Car insurance', 'Utilities (power, water, gas)', 'Phone & internet', 'Health insurance', 'Subscriptions & memberships', 'Childcare'];
 const EVERYDAY_PRESETS = [['Groceries', 'weekly'], ['Gas & transport', 'weekly']];
-const WIZ_STEPS = ['Income', 'Bills', 'Debts', 'Goals', 'Summary'];
+const WIZ_STEPS = ['Income', 'Money', 'Bills', 'Debts', 'Goals', 'Summary'];
+const MONEY_PRESETS = [['Checking account', 'cash'], ['Cash on hand', 'cash'], ['Savings account', 'savings'], ['Investments (401k, IRA, brokerage)', 'invest']];
 
 async function startNewAccount() {
   if (state.settings.setupDone || hasAnyData()) {
@@ -1104,6 +1317,7 @@ function runWizard() {
   const d = {
     currency: state.settings.currency,
     income: [row('Paycheck', 'weekly')],
+    money: MONEY_PRESETS.map(([n, type]) => ({ name: n, raw: '', type })),
     bills: BILL_PRESETS.map((n) => row(n)),
     everyday: EVERYDAY_PRESETS.map(([n, f]) => row(n, f)),
     debts: [],
@@ -1118,6 +1332,11 @@ function runWizard() {
   const amt = (raw) => (String(raw).trim() === '' ? 0 : parseMoney(raw));
   const monthlyOf = (rows) => rows.reduce((s, r) => s + toMonthly(Math.max(0, amt(r.raw) || 0), r.freq), 0);
   const money = (c) => formatMoney(c, d.currency);
+  const moneyTotals = () => {
+    const t = { cash: 0, savings: 0, invest: 0 };
+    for (const r of d.money) t[r.type] += amt(r.raw) || 0;
+    return t;
+  };
   const totals = () => {
     const income = monthlyOf(d.income);
     const bills = monthlyOf(d.bills);
@@ -1126,13 +1345,13 @@ function runWizard() {
     return { income, bills, everyday, mins, leftover: income - bills - everyday - mins };
   };
 
-  const rowsHtml = (list) => `
+  const rowsHtml = (list, opts = FREQ_OPTIONS, f = 'freq') => `
     <div class="wrows">${d[list].map((r, i) => `
       <div class="wrow">
         <input class="wname" data-list="${list}" data-i="${i}" data-f="name" value="${esc(r.name)}" maxlength="40" aria-label="Name" placeholder="Name">
         <button class="x" data-action="del-row" data-list="${list}" data-i="${i}" aria-label="Remove ${esc(r.name)}">×</button>
         <input class="wamt" data-list="${list}" data-i="${i}" data-f="raw" value="${esc(r.raw)}" inputmode="decimal" autocomplete="off" placeholder="0.00" aria-label="${esc(r.name || 'Amount')} amount">
-        <select data-list="${list}" data-i="${i}" data-f="freq" aria-label="How often">${FREQ_OPTIONS.map((o) => `<option value="${o.value}" ${o.value === r.freq ? 'selected' : ''}>${o.label}</option>`).join('')}</select>
+        <select data-list="${list}" data-i="${i}" data-f="${f}" aria-label="${f === 'type' ? 'Type' : 'How often'}">${opts.map((o) => `<option value="${o.value}" ${o.value === r[f] ? 'selected' : ''}>${o.label}</option>`).join('')}</select>
       </div>`).join('')}
     </div>`;
 
@@ -1166,6 +1385,15 @@ function runWizard() {
           ${rowsHtml('income')}
           <button class="btn" data-action="add-row" data-list="income">+ Add another income</button>
           <p class="wiz-total">About <b data-total="income">${money(t.income)}</b> a month.</p>`;
+      case 'Money': {
+        const m = moneyTotals();
+        return `
+          <h2>What do you have right now?</h2>
+          <p class="intro">Today's balances. Leave blank anything you don't have. From now on, everything you log keeps these up to date.</p>
+          ${rowsHtml('money', TYPE_OPTIONS, 'type')}
+          <button class="btn" data-action="add-row" data-list="money">+ Add another account</button>
+          <p class="wiz-total">Cash <b data-total="m-cash">${money(m.cash)}</b> · Savings <b data-total="m-savings">${money(m.savings)}</b> · Invested <b data-total="m-invest">${money(m.invest)}</b></p>`;
+      }
       case 'Bills':
         return `
           <h2>What do you pay regularly?</h2>
@@ -1206,6 +1434,7 @@ function runWizard() {
         const assigned = d.alloc.reduce((s, a) => s + Math.max(0, amt(a.raw) || 0), 0);
         return `
           <h2>Your month</h2>
+          ${(() => { const m = moneyTotals(); const tot = m.cash + m.savings + m.invest; return tot ? `<p class="wiz-total">You have <b>${money(tot)}</b> today: ${money(m.cash)} cash, ${money(m.savings)} savings, ${money(m.invest)} invested.</p>` : ''; })()}
           <ul class="flow">
             <li><span>Income</span><b>${money(t.income)}</b></li>
             <li><span>Fixed bills</span><b>−${money(t.bills)}</b></li>
@@ -1255,6 +1484,10 @@ function runWizard() {
       }
     };
     set('income', t.income);
+    const mt = moneyTotals();
+    set('m-cash', mt.cash);
+    set('m-savings', mt.savings);
+    set('m-invest', mt.invest);
     set('bills', t.bills);
     set('everyday', t.everyday);
     const assigned = d.alloc.reduce((s, a) => s + Math.max(0, amt(a.raw) || 0), 0);
@@ -1268,6 +1501,10 @@ function runWizard() {
       const bad = badRow('income');
       if (bad) return `Check the amount for ${bad.name || 'an income'}.`;
       if (!d.income.some((r) => amt(r.raw) > 0)) return 'Enter at least one income amount.';
+    }
+    if (step0 === 'Money') {
+      const bad = d.money.find((r) => amt(r.raw) == null);
+      if (bad) return `Check the amount for ${bad.name || 'an account'}.`;
     }
     if (step0 === 'Bills') {
       const bad = badRow('bills') || badRow('everyday');
@@ -1294,6 +1531,9 @@ function runWizard() {
     s.incomeSources = recurring(d.income, 'Income');
     s.bills = recurring(d.bills, 'Bill');
     s.debts = d.debts.map((x) => ({ ...x, createdAt: today, accruedThrough: today }));
+    s.accounts = d.money
+      .filter((r) => String(r.raw).trim() !== '' && amt(r.raw) != null)
+      .map((r) => ({ id: uid(), name: r.name.trim() || ACCOUNT_TYPES[r.type], type: r.type, start: amt(r.raw), createdAt: today }));
     s.categories = recurring(d.everyday, 'Everyday').map((r) => ({ id: r.id, name: r.name, kind: 'need', limit: toMonthly(r.amount, r.freq), target: null }));
     for (const a of d.alloc) {
       const limit = Math.max(0, amt(a.raw) || 0);
@@ -1314,7 +1554,7 @@ function runWizard() {
     const list = btn.dataset.list;
     const i = Number(btn.dataset.i);
     if (action === 'add-row') {
-      d[list].push(row('', list === 'income' ? 'weekly' : list === 'everyday' ? 'weekly' : 'monthly'));
+      d[list].push(list === 'money' ? { name: '', raw: '', type: 'cash' } : row('', list === 'income' ? 'weekly' : list === 'everyday' ? 'weekly' : 'monthly'));
       render();
       box.querySelectorAll(`.wname[data-list="${list}"]`)[d[list].length - 1]?.focus();
       return;
@@ -1382,6 +1622,11 @@ function onClick(e) {
     'add-rec': () => recurringForm(a.dataset.list),
     'edit-rec': () => recurringForm(a.dataset.list, state[a.dataset.list].find((x) => x.id === a.dataset.id)),
     'new-account': startNewAccount,
+    'add-account': () => accountForm(),
+    'open-account': () => openAccount(a.dataset.id),
+    payday: () => recordRecurring('payday'),
+    'pay-bill': () => recordRecurring('bill'),
+    'move-money': () => moveMoney(),
     'edit-goals': editGoals,
     goto: () => go(a.dataset.tab),
     month: () => {

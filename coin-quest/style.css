@@ -163,6 +163,14 @@ canvas.sprite.dead { filter: grayscale(1) brightness(0.6); }
 .goal-list { margin: 0 0 8px; padding-left: 20px; }
 .goal-list li { margin: 4px 0; }
 
+/* current situation */
+.worth { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 8px 16px; }
+.worth-net { text-align: right; }
+.worth-net b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; flex: none; }
+.row-btn .sw { width: 12px; height: 12px; }
+.card .chart { margin: 4px 0 8px; }
+
 /* account setup */
 .wiz-progress { display: flex; gap: 4px; list-style: none; padding: 0; margin: 0 40px 8px 0; }
 .wiz-progress li { flex: 1; height: 6px; border-radius: 3px; background: var(--bg); font-size: 0; }
