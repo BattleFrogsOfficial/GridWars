@@ -22,8 +22,9 @@ import {
 } from './game.js';
 import { XP, attackXp, levelInfo, streak } from './player.js';
 import { uid, emptyState, normalizeState } from './state.js';
-import { loadState, saveState, requestPersistence, downloadBackup, readBackup, loadProblem } from './storage.js';
+import { loadState, saveState, requestPersistence, downloadBackup, readBackup, hadLoadProblem } from './storage.js';
 import { drawSprite } from './sprites.js';
+import { MODELS, renderModel, renderPortrait } from './models.js';
 import { esc, toast, openSheet, openForm, askConfirm } from './ui.js';
 import { lineChart, attachCharts, SERIES_COLORS } from './chart.js';
 import { ACCOUNT_TYPES, accountEvents, accountBalances, totalsByType, accountActivity } from './accounts.js';
@@ -232,8 +233,30 @@ const hasAnyData = () => state.debts.length || state.incomes.length || state.exp
 
 // ---------- rendering helpers ----------
 
+/**
+ * A picture of a monster (or the hero) at 16 * scale CSS pixels.
+ * Monsters use their framed portrait in lists and cards, and the full 3D-rendered model at large sizes
+ * (scale 8+, the debt sheet). The hero still uses its 16x16 sprite.
+ */
 function spriteCanvas(key, temper, scale, cls = '') {
-  return `<canvas class="sprite ${cls}" width="${16 * scale}" height="${16 * scale}" data-sprite="${key}" data-temper="${temper}" data-scale="${scale}" aria-hidden="true"></canvas>`;
+  const px = 16 * scale;
+  if (MODELS[key]) {
+    const full = scale >= 8;
+    const size = full ? Math.round(px / 2) : px;
+    return `<canvas class="sprite ${full ? 'model' : 'portrait'} ${cls}" width="${size}" height="${size}" style="width:${px}px;height:${px}px" data-${full ? 'model' : 'portrait'}="${key}" data-temper="${temper}" aria-hidden="true"></canvas>`;
+  }
+  return `<canvas class="sprite ${cls}" width="${px}" height="${px}" data-sprite="${key}" data-temper="${temper}" data-scale="${scale}" aria-hidden="true"></canvas>`;
+}
+
+// Rendered portraits and models, by type, temper and size: each is drawn once.
+const artCache = new Map();
+function art(kind, type, temper, size) {
+  const k = `${kind}|${type}|${temper}|${size}`;
+  if (!artCache.has(k)) {
+    const buf = kind === 'portrait' ? renderPortrait(type, temper, { size }) : renderModel(type, temper, { w: size, h: size, t: 0.4 });
+    artCache.set(k, new ImageData(buf.data, buf.w, buf.h));
+  }
+  return artCache.get(k);
 }
 
 function paintSprites(root) {
@@ -241,6 +264,10 @@ function paintSprites(root) {
     const ctx = c.getContext('2d');
     ctx.clearRect(0, 0, c.width, c.height);
     drawSprite(ctx, c.dataset.sprite, c.dataset.temper, Number(c.dataset.scale));
+  }
+  for (const c of root.querySelectorAll('canvas[data-portrait], canvas[data-model]')) {
+    const kind = c.dataset.portrait ? 'portrait' : 'model';
+    c.getContext('2d').putImageData(art(kind, c.dataset[kind], c.dataset.temper, c.width), 0, 0);
   }
 }
 
@@ -427,7 +454,7 @@ function reportCard() {
 
 function projectRow(m, right, cls = '') {
   return `<li><button class="row-btn" data-action="project" data-id="${m.id}">
-    ${spriteCanvas(m.species.key, m.temper.key, 2)}
+    ${spriteCanvas(m.species.key, m.temper.key, 3)}
     <span class="grow">${esc(m.name)}<small>${fmt(m.balance)} · ${m.rate}% APR${m.promo ? ` until ${dayLabel(m.promo.ends)}` : ''}</small></span>
     <small class="${cls}">${right}</small><span class="chev" aria-hidden="true">›</span>
   </button></li>`;
@@ -636,7 +663,7 @@ function spendView() {
       <h2>Debts</h2>
       ${ms.length ? `<ul class="rows">${ms.sort((a, b) => b.balance - a.balance).map((d) => `
         <li><button class="row-btn" data-action="open-debt" data-id="${d.id}">
-          ${spriteCanvas(d.species.key, d.temper.key, 2, d.alive ? '' : 'dead')}
+          ${spriteCanvas(d.species.key, d.temper.key, 3, d.alive ? '' : 'dead')}
           <span class="grow">${esc(d.name)}<small>${d.alive ? `${typeLabel(d.type)} · ${d.rate}% APR${d.promo ? ` until ${dayLabel(d.promo.ends)}, then ${d.promo.after}%` : ''}${d.paused ? ` · paused until ${dayLabel(d.pauseUntil)}` : ''}${d.missed ? ' · missed payment' : ''}${d.include ? '' : ' · benched'}` : 'Paid off'}</small></span>
           <b>${fmt(Math.max(0, d.balance))}</b>
         </button></li>`).join('')}</ul>` : '<p class="empty">No debts yet. Add each loan or card you owe on.</p>'}
@@ -1139,7 +1166,7 @@ function budgetView() {
       <h2>Debt minimum payments</h2>
       ${alive.length ? `<ul class="rows">${alive.map((d) => `
         <li><button class="row-btn" data-action="open-debt" data-id="${d.id}">
-          ${spriteCanvas(d.species.key, d.temper.key, 2)}
+          ${spriteCanvas(d.species.key, d.temper.key, 3)}
           <span class="grow">${esc(d.name)}<small>${fmt(d.balance)} owed</small></span>
           <b>${fmt(d.minPayment)}<small>/mo</small></b>
         </button></li>`).join('')}</ul>` : '<p class="empty">No debts.</p>'}
@@ -1686,7 +1713,7 @@ function upcomingCard() {
         return `
           <li class="${due ? 'due' : ''}">
             <button class="row-btn" data-action="edit-scheduled" data-id="${x.id}">
-              ${debt ? spriteCanvas(debt.species.key, debt.temper.key, 2) : ''}
+              ${debt ? spriteCanvas(debt.species.key, debt.temper.key, 3) : ''}
               <span class="grow">${esc(debt ? debt.name : x.name)}<small>${due ? 'Due ' : ''}${dayLabel(x.date)} · ${esc(what)}</small></span>
               <b>${fmt(x.amount)}</b>
             </button>
@@ -2589,7 +2616,7 @@ function enableSwipe() {
 
 async function boot() {
   state = await loadState();
-  if (loadProblem) setTimeout(() => toast('Your saved data could not be read. A copy was kept safe; restore a backup in Settings.', 'bad'), 500);
+  if (hadLoadProblem()) setTimeout(() => toast('Your saved data could not be read. A copy was kept safe; restore a backup in Settings.', 'bad'), 500);
   runAccrual();
   runRecurring();
   checkAchievements();

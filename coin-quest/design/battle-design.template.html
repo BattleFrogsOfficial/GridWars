@@ -1,0 +1,421 @@
+<title>Battle Screen Design</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800;900&display=swap">
+<style>
+/* Layout: one column — the live phone mock first, then the swipe storyboard, then the art gallery.
+   Single dark look matching the app (deliberately one theme). */
+:root {
+  --bg: #121a3a;
+  --panel: #1d2a5a;
+  --panel-2: #2a3a75;
+  --ink: #f3f5ff;
+  --muted: #a9b6e0;
+  --line: #080c22;
+  --gold: #ffc94a;
+  --gold-deep: #e08a12;
+  --hp: #e04848;
+  --font: "Nunito", ui-rounded, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 600 16px/1.5 var(--font); }
+main { max-width: 980px; margin: 0 auto; padding-block: 24px 48px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+h1 { font-size: 30px; font-weight: 900; margin: 0 0 4px; text-wrap: balance; }
+h2 { font-size: 13px; font-weight: 900; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 40px 0 12px; }
+p { margin: 6px 0; max-width: 64ch; }
+.lede { color: var(--muted); }
+.top { display: grid; grid-template-columns: minmax(0, 380px) minmax(0, 1fr); gap: 32px; align-items: start; margin-top: 20px; }
+@media (max-width: 760px) { .top { grid-template-columns: minmax(0, 1fr); } }
+
+/* phone mock */
+.phone { width: 100%; max-width: 380px; margin: 0 auto; background: #05070f; border: 3px solid var(--line); border-radius: 34px; padding: 12px; box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5); }
+.screen { position: relative; border-radius: 24px; overflow: hidden; background: #000; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+.stage { display: block; width: 100%; height: auto; image-rendering: pixelated; image-rendering: crisp-edges; cursor: grab; }
+.stage:active { cursor: grabbing; }
+.hud { position: absolute; left: 10px; right: 10px; top: 10px; display: flex; gap: 10px; align-items: center; padding: 8px; background: rgba(8, 12, 34, 0.78); border: 2px solid var(--line); border-radius: 14px; backdrop-filter: blur(2px); }
+.hud canvas { width: 64px; height: 64px; image-rendering: pixelated; flex: none; }
+.hud .grow { flex: 1; min-width: 0; }
+.hud .name { font-weight: 900; font-size: 17px; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hud small { display: block; color: var(--muted); font-size: 12px; }
+.badge { display: inline-block; font-size: 10px; font-weight: 900; letter-spacing: 0.05em; padding: 1px 6px; border-radius: 5px; background: linear-gradient(#ffd25a, var(--gold-deep)); color: #2b1600; vertical-align: 2px; margin-left: 4px; }
+.hp { position: relative; height: 18px; margin-top: 4px; background: var(--line); border-radius: 5px; overflow: hidden; }
+.hp > i { display: block; height: 100%; background: linear-gradient(#ff7a6a, var(--hp)); transition: width 0.5s ease-out; }
+.hp > b { position: absolute; inset: 0; text-align: center; font-size: 12px; line-height: 18px; font-weight: 900; text-shadow: 0 1px 2px #000; font-variant-numeric: tabular-nums; }
+.hp .ph { position: absolute; top: 0; bottom: 0; width: 2px; background: rgba(0, 0, 0, 0.55); }
+.dots { position: absolute; left: 0; right: 0; bottom: 74px; display: flex; justify-content: center; gap: 6px; pointer-events: none; }
+.dots i { width: 8px; height: 8px; border-radius: 2px; background: rgba(255, 255, 255, 0.35); }
+.dots i.on { background: var(--gold); }
+.actions { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; gap: 8px; }
+.btn { flex: 1; min-height: 48px; border: 2px solid var(--line); border-radius: 12px; font: inherit; font-weight: 900; font-size: 16px; color: var(--ink); background: linear-gradient(#4a62b8, #34479a); box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.25), 0 3px 0 var(--line); cursor: pointer; }
+.btn.primary { background: linear-gradient(#ffd25a, var(--gold-deep)); color: #2b1600; }
+.btn:active { transform: translateY(2px); }
+.btn:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+.arrow { position: absolute; top: 46%; width: 36px; height: 52px; border: 0; border-radius: 10px; background: rgba(8, 12, 34, 0.5); color: var(--ink); font-size: 26px; font-weight: 900; cursor: pointer; }
+.arrow.l { left: 6px; } .arrow.r { right: 6px; }
+.dmg { position: absolute; left: 50%; top: 34%; transform: translateX(-50%); font-weight: 900; font-size: 30px; color: var(--gold); text-shadow: 0 3px 0 #000, 0 0 8px rgba(0, 0, 0, 0.6); pointer-events: none; animation: rise 1.1s ease-out forwards; font-variant-numeric: tabular-nums; }
+@keyframes rise { from { opacity: 1; transform: translate(-50%, 0) scale(1.2); } to { opacity: 0; transform: translate(-50%, -48px) scale(1); } }
+.spec dt { font-weight: 900; margin-top: 14px; }
+.spec dd { margin: 2px 0 0; color: var(--muted); }
+.legend-chip { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: 0; }
+
+/* storyboard + gallery */
+.board { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 640px) { .board { grid-template-columns: minmax(0, 1fr); max-width: 300px; margin: 0 auto; } }
+.board figure { margin: 0; }
+.board canvas { width: 100%; height: auto; image-rendering: pixelated; border: 3px solid var(--line); border-radius: 14px; display: block; }
+figcaption { font-size: 14px; color: var(--muted); margin-top: 6px; }
+figcaption b { color: var(--ink); display: block; }
+.gallery { overflow-x: auto; border: 2px solid var(--line); border-radius: 14px; background: #0d1330; }
+.gallery table { border-collapse: collapse; min-width: 640px; width: 100%; }
+.gallery th { font-size: 12px; font-weight: 900; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); padding: 10px 8px; text-align: center; }
+.gallery th[scope=row] { text-align: left; color: var(--ink); text-transform: none; letter-spacing: 0; font-size: 15px; white-space: nowrap; }
+.gallery th[scope=row] small { display: block; color: var(--muted); font-weight: 700; font-size: 12px; }
+.gallery td { text-align: center; padding: 6px; }
+.gallery canvas { width: 96px; height: 96px; image-rendering: pixelated; }
+.gallery canvas.frame { width: 84px; height: 84px; }
+.loading { color: var(--muted); font-size: 14px; }
+@media (prefers-reduced-motion: reduce) { .dmg { animation: none; } }
+</style>
+
+<main>
+  <h1>Battle screen</h1>
+  <p class="lede">A design for Coin Quest's center tab. You stand in a pixel world facing one debt at a time; swipe left or right to face the next. Monsters are rendered from small 3D models, so they turn as they leave and enter.</p>
+
+  <div class="top">
+    <div class="phone">
+      <div class="screen" id="screen">
+        <canvas class="stage" id="stage" width="120" height="168" aria-label="Battle view"></canvas>
+        <div class="hud" id="hud"></div>
+        <button class="arrow l" id="prev" aria-label="Previous monster">‹</button>
+        <button class="arrow r" id="next" aria-label="Next monster">›</button>
+        <div class="dots" id="dots"></div>
+        <div class="actions">
+          <button class="btn primary" id="attack">Attack (pay)</button>
+          <button class="btn" id="info">Details</button>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <dl class="spec">
+        <dt>Center stage</dt>
+        <dd>The monster stands on the path a few steps ahead, in a backdrop that matches its type: Mossy Hollow, Goblin Woods, Stone Bridge, Ember Canyon, the Dragon's Lair or the Castle Gate. Your shield and sword frame the bottom of the view.</dd>
+        <dt>Swiping</dt>
+        <dd>Drag the scene, use the arrows or press ← →. The current monster slides and turns away from you; the scenery pans as if you turned your head; the next monster turns to face you as it arrives. Let go before a quarter of the width and it settles back.</dd>
+        <dt>Attacking</dt>
+        <dd>Attack (pay) opens the payment form in the app. Here it plays the sword thrust, a white hit flash and the damage number, and the HP bar drops. Boss marks at 75/50/25% sit on the bar.</dd>
+        <dt>What the art says</dt>
+        <dd>Monster type comes from the balance (Slime under $500 up to Elder Dragon over $40k; a mortgage is a Castle). Colour comes from the interest rate: <span class="legend-chip" style="background:#3f9a52"></span>calm under 5%, <span class="legend-chip" style="background:#c0681c"></span>angry 5–15%, <span class="legend-chip" style="background:#a8262e"></span>furious 15%+. Frames read as rank: wood, iron, bronze, silver, gold, obsidian.</dd>
+      </dl>
+    </div>
+  </div>
+
+  <h2>Swipe states</h2>
+  <div class="board">
+    <figure><canvas id="sb0" width="120" height="168"></canvas><figcaption><b>At rest</b>Facing the current monster.</figcaption></figure>
+    <figure><canvas id="sb1" width="120" height="168"></canvas><figcaption><b>Swiping left</b>It turns and slides off to the left; the next one enters from the right, turned toward the way it came.</figcaption></figure>
+    <figure><canvas id="sb2" width="120" height="168"></canvas><figcaption><b>Swiping right</b>The same in reverse, back to the previous monster.</figcaption></figure>
+  </div>
+
+  <h2>Monster models</h2>
+  <div class="gallery"><table id="models"><thead><tr><th>Type</th><th>Calm</th><th>Angry</th><th>Furious</th><th>Turning</th><th>Side</th></tr></thead><tbody></tbody></table></div>
+  <p class="loading" id="loading1">Rendering models…</p>
+
+  <h2>Framed portraits</h2>
+  <p>Used everywhere outside the battle view: debt lists, the plan, upcoming payments and details.</p>
+  <div class="gallery"><table id="frames"><thead><tr><th>Type</th><th>Frame</th><th>Calm</th><th>Angry</th><th>Furious</th></tr></thead><tbody></tbody></table></div>
+</main>
+
+<script>
+/*__MODELS__*/
+/*__SCENES__*/
+
+// ---------- sample debts (made up, for the design) ----------
+const DEBTS = [
+  { name: 'Student loan', type: 'dragon', temper: 'angry', apr: 7.5, balance: 4100000, max: 4800000, boss: true, species: 'Elder Dragon' },
+  { name: 'Car loan', type: 'drake', temper: 'angry', apr: 6.9, balance: 1450000, max: 1800000, species: 'Young Dragon' },
+  { name: 'Visa', type: 'troll', temper: 'furious', apr: 24.99, balance: 420000, max: 500000, species: 'Troll' },
+  { name: 'Store card', type: 'goblin', temper: 'furious', apr: 29.99, balance: 82000, max: 100000, species: 'Goblin' },
+  { name: 'Dentist', type: 'slime', temper: 'calm', apr: 0, balance: 32000, max: 40000, species: 'Slime' },
+  { name: 'Mortgage', type: 'castle', temper: 'angry', apr: 6.5, balance: 25000000, max: 26000000, species: 'Castle Keep' },
+];
+const TEMPER_NAME = { calm: 'Calm', angry: 'Angry', furious: 'Furious' };
+const money = (c) => (c / 100).toLocaleString(undefined, { style: 'currency', currency: 'USD' });
+
+// ---------- render cache (frames are rendered lazily, a few at a time, so the page stays responsive) ----------
+const W = 120, H = 168, M = 92; // stage and monster size in pixels
+const YAWS = [-1.4, -1.05, -0.7, -0.35, 0, 0.35, 0.7, 1.05, 1.4];
+const IDLE_T = [0, 0.48, 0.95, 1.43, 1.9, 2.38];
+const toCanvas = (buf) => {
+  const c = document.createElement('canvas');
+  c.width = buf.w; c.height = buf.h;
+  c.getContext('2d').putImageData(new ImageData(buf.data, buf.w, buf.h), 0, 0);
+  return c;
+};
+const flashOf = (cv) => {
+  const c = document.createElement('canvas');
+  c.width = cv.width; c.height = cv.height;
+  const g = c.getContext('2d');
+  g.drawImage(cv, 0, 0);
+  g.globalCompositeOperation = 'source-atop';
+  g.fillStyle = '#fff';
+  g.fillRect(0, 0, c.width, c.height);
+  return c;
+};
+const cache = new Map();
+const queue = [];
+const key = (d, yaw, t) => `${d.type}|${d.temper}|${yaw}|${t}`;
+function frame(d, yaw = 0, t = 0) {
+  const k = key(d, yaw, t);
+  if (cache.has(k)) return cache.get(k);
+  if (!queue.some((q) => q.k === k)) queue.push({ k, d, yaw, t });
+  // nearest frame we already have
+  let best = null, bd = 1e9;
+  for (const y of YAWS) {
+    const kk = key(d, y, 0);
+    if (cache.has(kk) && Math.abs(y - yaw) < bd) { bd = Math.abs(y - yaw); best = cache.get(kk); }
+  }
+  return best;
+}
+function want(d, yaws, ts = [0]) { for (const y of yaws) for (const t of ts) frame(d, y, t); }
+function pump() {
+  const start = performance.now();
+  while (queue.length && performance.now() - start < 30) {
+    const q = queue.shift();
+    if (cache.has(q.k)) continue;
+    cache.set(q.k, toCanvas(renderModel(q.d.type, q.d.temper, { w: M, h: M, yaw: q.yaw, t: q.t })));
+  }
+  setTimeout(pump, queue.length ? 0 : 120);
+}
+const scenes = new Map();
+const sceneOf = (type) => scenes.get(type) || (scenes.set(type, toCanvas(renderScene(type, W, H))), scenes.get(type));
+const sword = toCanvas(renderSword());
+const shield = toCanvas(renderShield());
+
+// ---------- particles per habitat ----------
+const PARTICLES = { fireflies: ['#e8ff8a', '#a8e060'], embers: ['#ffb040', '#ff6a1a'], mist: ['#c8d0e8', '#9aa4c4'], snow: ['#ffffff', '#c8d4f0'] };
+let parts = [];
+function seedParticles(kind) {
+  parts = Array.from({ length: kind === 'mist' ? 26 : 18 }, () => ({ x: Math.random() * W, y: Math.random() * H * 0.9, p: Math.random() * 6.28, s: 0.3 + Math.random() * 0.7 }));
+}
+function drawParticles(g, kind, time) {
+  const cols = PARTICLES[kind];
+  for (const q of parts) {
+    if (kind === 'fireflies') { q.x += Math.sin(time * 0.8 + q.p) * 0.15; q.y += Math.cos(time * 0.6 + q.p) * 0.1; if (Math.sin(time * 3 + q.p) < 0.2) continue; }
+    if (kind === 'embers') { q.y -= 0.25 * q.s; q.x += Math.sin(time + q.p) * 0.12; if (q.y < 0) { q.y = H; q.x = Math.random() * W; } }
+    if (kind === 'snow') { q.y += 0.2 * q.s; q.x += Math.sin(time * 0.7 + q.p) * 0.1; if (q.y > H) { q.y = 0; q.x = Math.random() * W; } }
+    if (kind === 'mist') { q.x += 0.08 * q.s; if (q.x > W + 6) q.x = -6; q.y = H * 0.5 + Math.sin(q.p) * 10; }
+    g.fillStyle = cols[(q.p * 10 | 0) % 2];
+    if (kind === 'mist') { g.globalAlpha = 0.18; g.fillRect(Math.round(q.x) - 4, Math.round(q.y), 9, 2); g.globalAlpha = 1; }
+    else g.fillRect(Math.round(q.x), Math.round(q.y), 1, 1);
+  }
+}
+
+// ---------- composing a view ----------
+// offset: -1..1 swipe progress (negative = moving to the next monster on the right).
+function compose(g, i, offset, time, opts = {}) {
+  const d = DEBTS[i];
+  const dir = offset < 0 ? 1 : -1; // which neighbour is coming in
+  const j = (i + dir + DEBTS.length) % DEBTS.length;
+  const n = DEBTS[j];
+  const shift = offset * W;
+  g.imageSmoothingEnabled = false;
+  g.clearRect(0, 0, W, H);
+  // scenery pans at half speed, like turning your head
+  g.drawImage(sceneOf(d.type), Math.round(shift * 0.5), 0);
+  if (offset) g.drawImage(sceneOf(n.type), Math.round(shift * 0.5 + dir * W), 0);
+  if (!opts.noParticles) drawParticles(g, HABITATS[d.type].particles, time);
+  // monsters: the current one turns away as it leaves, the next one turns toward you as it arrives
+  const snap = (y) => YAWS.reduce((a, b) => (Math.abs(b - y) < Math.abs(a - y) ? b : a));
+  const yawOut = snap(offset * 1.6);
+  const yawIn = snap(-dir * 1.4 * (1 - Math.min(1, Math.abs(offset) * 1.25)));
+  const idle = offset ? 0 : IDLE_T[Math.floor(time * 5) % IDLE_T.length];
+  const curF = frame(d, yawOut, idle) || frame(d, yawOut, 0);
+  const baseY = Math.round(H * 0.86) - M;
+  const cx = Math.round((W - M) / 2);
+  if (curF) {
+    const shake = opts.hit ? Math.round(Math.sin(time * 60) * 2) : 0;
+    g.drawImage(opts.hit && opts.flash ? flashOf(curF) : curF, cx + Math.round(shift * 1.1) + shake, baseY);
+  }
+  if (offset) {
+    const nf = frame(n, yawIn, 0);
+    // arrives faster than the old one leaves, so it's on screen early in the swipe
+    if (nf) g.drawImage(nf, cx + Math.round(dir * W * 1.1 * Math.pow(1 - Math.abs(offset), 1.6)), baseY);
+  }
+  // shield and sword (the sword thrusts toward the monster while attacking)
+  const thrust = opts.thrust || 0;
+  g.drawImage(shield, -10, H - shield.height + 8);
+  g.drawImage(sword, W - sword.width + 12 - Math.round(thrust * 22), H - sword.height + 26 - Math.round(thrust * 30));
+  if (thrust > 0.6) {
+    // slash streak
+    g.fillStyle = '#ffffff';
+    for (let k = 0; k < 14; k++) g.fillRect(cx + 20 + k * 3, baseY + 30 + k * 2 - (k % 2), 3, 1);
+  }
+}
+
+// ---------- live phone mock ----------
+const stage = document.getElementById('stage');
+const sg = stage.getContext('2d');
+const screen = document.getElementById('screen');
+let cur = 0, drag = null, anim = null, hitUntil = 0, thrustT = -1;
+
+function renderHud() {
+  const d = DEBTS[cur];
+  const hud = document.getElementById('hud');
+  const pct = Math.max(0, (d.balance / d.max) * 100);
+  hud.innerHTML = `<canvas width="56" height="56" aria-hidden="true"></canvas>
+    <div class="grow">
+      <div class="name">${d.name}${d.boss ? '<span class="badge">BOSS</span>' : ''}</div>
+      <small>${TEMPER_NAME[d.temper]} ${d.species} · ${d.apr}% APR</small>
+      <div class="hp" role="meter" aria-label="HP" aria-valuenow="${Math.round(pct)}" aria-valuemin="0" aria-valuemax="100"><i style="width:${pct}%"></i>${d.boss ? [75, 50, 25].map((p) => `<span class="ph" style="left:${p}%"></span>`).join('') : ''}<b>${money(d.balance)}</b></div>
+    </div>`;
+  const pc = hud.querySelector('canvas');
+  const pk = `p|${d.type}|${d.temper}`;
+  if (!cache.has(pk)) cache.set(pk, toCanvas(renderPortrait(d.type, d.temper, { size: 56 })));
+  pc.getContext('2d').drawImage(cache.get(pk), 0, 0);
+  document.getElementById('dots').innerHTML = DEBTS.map((_, k) => `<i class="${k === cur ? 'on' : ''}"></i>`).join('');
+  seedParticles(HABITATS[d.type].particles);
+  // get the frames this view and a swipe either way will need
+  const near = [DEBTS[cur], DEBTS[(cur + 1) % DEBTS.length], DEBTS[(cur - 1 + DEBTS.length) % DEBTS.length]];
+  want(near[0], [0], IDLE_T);
+  for (const d2 of near) want(d2, YAWS);
+}
+
+function go(dir) {
+  if (anim) return;
+  const from = drag ? drag.offset : 0;
+  const to = dir > 0 ? -1 : 1;
+  const t0 = performance.now();
+  anim = { from, to, t0, dur: 360 * (1 - Math.abs(from)) + 120, done: () => { cur = (cur + dir + DEBTS.length) % DEBTS.length; renderHud(); } };
+}
+function settle() {
+  const from = drag.offset;
+  anim = { from, to: 0, t0: performance.now(), dur: 220, done: () => {} };
+}
+
+let lastOffset = 0;
+function loop(now) {
+  const time = now / 1000;
+  let offset = drag ? drag.offset : 0;
+  if (anim) {
+    const k = Math.min(1, (now - anim.t0) / anim.dur);
+    const e = 1 - Math.pow(1 - k, 3);
+    offset = anim.from + (anim.to - anim.from) * e;
+    if (k >= 1) {
+      const done = anim.done;
+      anim = null;
+      offset = 0;
+      done();
+    }
+  }
+  let thrust = 0;
+  if (thrustT >= 0) {
+    const k = (now - thrustT) / 320;
+    thrust = k < 0.4 ? k / 0.4 : k < 1 ? 1 - (k - 0.4) / 0.6 : 0;
+    if (k >= 1) thrustT = -1;
+  }
+  const hit = now < hitUntil;
+  compose(sg, cur, offset, time, { thrust, hit, flash: hit && now < hitUntil - 260 });
+  lastOffset = offset;
+  requestAnimationFrame(loop);
+}
+
+screen.addEventListener('pointerdown', (e) => {
+  if (e.target.closest('button') || anim) return;
+  drag = { x0: e.clientX, offset: 0, id: e.pointerId };
+  stage.setPointerCapture(e.pointerId);
+});
+stage.addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  const w = stage.getBoundingClientRect().width;
+  drag.offset = Math.max(-1, Math.min(1, (e.clientX - drag.x0) / w));
+});
+const end = () => {
+  if (!drag) return;
+  if (Math.abs(drag.offset) > 0.25) go(drag.offset < 0 ? 1 : -1);
+  else settle();
+  drag = null;
+};
+stage.addEventListener('pointerup', end);
+stage.addEventListener('pointercancel', end);
+document.getElementById('next').onclick = () => go(1);
+document.getElementById('prev').onclick = () => go(-1);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowRight') go(1);
+  if (e.key === 'ArrowLeft') go(-1);
+});
+document.getElementById('attack').onclick = () => {
+  const d = DEBTS[cur];
+  thrustT = performance.now();
+  setTimeout(() => {
+    hitUntil = performance.now() + 420;
+    const dmg = Math.min(d.balance, Math.round(d.max * 0.06 / 100) * 100);
+    d.balance -= dmg;
+    const pop = document.createElement('div');
+    pop.className = 'dmg';
+    pop.textContent = `−${money(dmg)}`;
+    screen.appendChild(pop);
+    setTimeout(() => pop.remove(), 1200);
+    renderHud();
+  }, 130);
+};
+document.getElementById('info').onclick = () => {
+  const d = DEBTS[cur];
+  // in the app this opens the debt's details sheet
+  document.getElementById('info').textContent = `${d.name}: ${money(d.balance)}`;
+  setTimeout(() => (document.getElementById('info').textContent = 'Details'), 1400);
+};
+
+// ---------- storyboard (still frames) ----------
+function storyboard() {
+  const views = [['sb0', 0], ['sb1', -0.45], ['sb2', 0.45]];
+  const sbDebt = 1; // the car loan dragon
+  let ready = true;
+  for (const [id, off] of views) {
+    const g = document.getElementById(id).getContext('2d');
+    compose(g, sbDebt, off, 0.4, { noParticles: true });
+  }
+  // redraw until every frame those stills use has been rendered
+  const need = [DEBTS[sbDebt], DEBTS[sbDebt + 1], DEBTS[sbDebt - 1]];
+  for (const d of need) for (const y of YAWS) if (!cache.has(key(d, y, 0))) ready = false;
+  if (!ready) setTimeout(storyboard, 400);
+}
+
+// ---------- gallery ----------
+const TYPES = [
+  ['slime', 'Slime', 'Under $500'], ['goblin', 'Goblin', '$500–$2,000'], ['troll', 'Troll', '$2,000–$10,000'],
+  ['drake', 'Young Dragon', '$10,000–$40,000'], ['dragon', 'Elder Dragon', 'Over $40,000'], ['castle', 'Castle Keep', 'Mortgages'],
+];
+function gallery() {
+  const mt = document.querySelector('#models tbody');
+  const ft = document.querySelector('#frames tbody');
+  const jobs = [];
+  for (const [type, name, range] of TYPES) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<th scope="row">${name}<small>${range}</small></th>` + ['a', 'b', 'c', 'd', 'e'].map(() => '<td><canvas width="64" height="64"></canvas></td>').join('');
+    mt.appendChild(tr);
+    const cvs = tr.querySelectorAll('canvas');
+    [['calm', 0], ['angry', 0], ['furious', 0], ['angry', 0.75], ['angry', -1.35]].forEach(([tp, yaw], k) => jobs.push(() => cvs[k].getContext('2d').putImageData(new ImageData(renderModel(type, tp, { w: 64, h: 64, yaw, t: 0.4 }).data, 64, 64), 0, 0)));
+    const fr = document.createElement('tr');
+    fr.innerHTML = `<th scope="row">${name}</th><td>${FRAMES[type].name}</td>` + [0, 1, 2].map(() => '<td><canvas class="frame" width="56" height="56"></canvas></td>').join('');
+    ft.appendChild(fr);
+    const fcv = fr.querySelectorAll('canvas');
+    ['calm', 'angry', 'furious'].forEach((tp, k) => jobs.push(() => fcv[k].getContext('2d').putImageData(new ImageData(renderPortrait(type, tp, { size: 56 }).data, 56, 56), 0, 0)));
+  }
+  const step = () => {
+    const t0 = performance.now();
+    while (jobs.length && performance.now() - t0 < 25) jobs.shift()();
+    if (jobs.length) setTimeout(step, 16);
+    else document.getElementById('loading1').remove();
+  };
+  setTimeout(step, 1500);
+}
+
+renderHud();
+pump();
+requestAnimationFrame(loop);
+setTimeout(storyboard, 300);
+gallery();
+</script>

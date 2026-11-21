@@ -80,8 +80,11 @@ export async function loadState() {
   }
 }
 
+let loadProblem = false;
 /** True if the last load found a save it could not read (a copy of it was kept). */
-export let loadProblem = false;
+export function hadLoadProblem() {
+  return loadProblem;
+}
 
 export async function saveState(state) {
   const json = JSON.stringify(state);

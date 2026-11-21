@@ -5,14 +5,20 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 const root = new URL('../', import.meta.url);
 const read = (p) => readFileSync(new URL(p, root), 'utf8');
-const ORDER = ['money', 'dates', 'debts', 'planner', 'budget', 'player', 'accounts', 'projection', 'recurring', 'game', 'state', 'storage', 'sprites', 'ui', 'chart', 'lock', 'app'];
+const ORDER = ['money', 'dates', 'debts', 'planner', 'budget', 'player', 'accounts', 'projection', 'recurring', 'game', 'state', 'storage', 'sprites', 'models', 'scenes', 'ui', 'chart', 'lock', 'app'];
 
+// Each module runs in its own scope and hands back only what it exports, so private helpers with the
+// same name in different files can't collide. Exported names are unique across the app.
 const js = ORDER.map((name) => {
-  const src = read(`js/${name}.js`)
+  const raw = read(`js/${name}.js`);
+  const exportsList = [...raw.matchAll(/^export\s+(?:async\s+)?(?:function\*?|const|let|class)\s+([A-Za-z_$][\w$]*)/gm)].map((m) => m[1]);
+  const src = raw
     .replace(/^import[\s\S]*?from\s+['"][^'"]+['"];?[ \t]*$/gm, '')
     .replace(/^export\s+(?=(async\s+)?function|const|let|class)/gm, '');
   if (/^\s*(import|export)\b/m.test(src)) throw new Error(`Unhandled import/export left in ${name}.js`);
-  return `// ---- ${name}.js ----\n${src}`;
+  if (/^export\s+let\b/m.test(raw)) throw new Error(`${name}.js exports a let; export a function instead so bundling keeps it live`);
+  if (!exportsList.length) return `// ---- ${name}.js ----\n(() => {\n${src}\n})();`;
+  return `// ---- ${name}.js ----\nconst { ${exportsList.join(', ')} } = (() => {\n${src}\nreturn { ${exportsList.join(', ')} };\n})();`;
 }).join('\n');
 
 const html = read('index.html');

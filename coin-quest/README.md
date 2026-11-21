@@ -64,6 +64,9 @@ GitHub Pages on a private repository needs a paid GitHub plan.
 | `js/player.js` | XP, levels, streaks |
 | `js/state.js` | Save-file shape, validation, migrations |
 | `js/storage.js` | IndexedDB, backup/restore |
-| `js/sprites.js` | Pixel sprites as text grids + palettes |
+| `js/sprites.js` | Hero sprite as a text grid + palettes |
+| `js/models.js` | 3D-modelled monsters (signed-distance shapes, ray marched into dithered, outlined pixel art) and framed portraits |
+| `js/scenes.js` | First-person battle backdrops per monster type, sword and shield |
+| `design/` | Battle screen design page (`node tools/build-design.mjs design/battle-design.template.html out.html`) |
 | `js/ui.js`, `js/app.js` | Dialogs/forms, screens and actions |
 | `sw.js`, `manifest.webmanifest` | Offline cache and install metadata (bump `VERSION` in `sw.js` when files change) |

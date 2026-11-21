@@ -112,6 +112,7 @@ b, strong { font-weight: 800; }
 /* sprites */
 canvas.sprite { image-rendering: pixelated; image-rendering: crisp-edges; flex: none; }
 canvas.sprite.dead { filter: grayscale(1) brightness(0.6); }
+canvas.sprite.portrait { border-radius: 3px; }
 
 .hero { display: flex; gap: 14px; align-items: center; }
 .hero-line { display: flex; justify-content: space-between; gap: 8px; }
