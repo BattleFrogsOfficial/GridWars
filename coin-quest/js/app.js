@@ -22,7 +22,7 @@ import { loadState, saveState, requestPersistence, downloadBackup, readBackup, h
 import { drawSprite } from './sprites.js';
 import { MODELS, renderModel, renderPortrait, damageLevel } from './models.js';
 import { esc, toast, holdToasts, openSheet, openForm, askConfirm } from './ui.js';
-import { battleMarkup, mountBattle, playAttack, battleKey, attackPower } from './battle.js';
+import { battleMarkup, mountBattle, playAttack, battleKey, attackPower, drawDiorama } from './battle.js';
 import { lineChart, attachCharts, SERIES_COLORS } from './chart.js';
 import { ACCOUNT_TYPES, accountEvents, accountBalances, totalsByType, accountActivity } from './accounts.js';
 import { moneyTimeline } from './projection.js';
@@ -708,6 +708,17 @@ function fighterOf(m) {
 const fightOrder = (a, b) => (b.boss - a.boss) || b.balance - a.balance;
 const battleFighters = () => monsters().filter((m) => m.alive && m.include).sort(fightOrder).map(fighterOf);
 
+/** The monster in its habitat, for the top of a debt's sheets (painted by paintDioramas). */
+const dioramaHtml = (m, cls = '') => `<canvas class="diorama ${cls}" data-dio="${m.id}" width="120" height="90" aria-hidden="true"></canvas>`;
+function paintDioramas(root) {
+  for (const c of root.querySelectorAll('canvas[data-dio]')) {
+    const m = monsters().find((x) => x.id === c.dataset.dio);
+    if (m) drawDiorama(c, fighterOf(m));
+  }
+}
+const debtSubline = (m) => `${m.rate}% APR · Started at ${fmt(m.startBalance)}`;
+const totalPaid = (m) => state.ledger.reduce((t, e) => t + (e.debtId === m.id && e.kind === 'payment' ? -e.amount : 0), 0);
+
 /** Stars for how hard a payment hits (the attack's name only shows while it plays). */
 function powerLabel(cents, m) {
   const p = attackPower(cents, m.maxHp, m.balance);
@@ -722,7 +733,8 @@ function payMonster(id) {
   const min = Math.min(m.minPayment || 0, m.balance);
   const acct = withAccount('Paid from', ['cash', 'savings'])[0];
   const acctName = acct?.value ? state.accounts.find((a) => a.id === acct.value)?.name : null;
-  openSheet(`
+  const sheet = openSheet(`
+    ${dioramaHtml(m, 'short')}
     <h2>Pay ${esc(m.name)}</h2>
     <p class="hint">${fmt(m.balance)} owed${m.paused ? ` · payments paused until ${dayLabel(m.pauseUntil)}` : ''}</p>
     <div class="pay-choices">
@@ -745,7 +757,9 @@ function payMonster(id) {
       }
       if (action === 'custom') logDebtEntry('payment', m.id, true);
     },
+    className: 'debt-sheet',
   });
+  paintDioramas(sheet.el);
 }
 
 /** The Battle tab is only the battle: the stage, or a prompt to add a first debt. */
@@ -1352,6 +1366,8 @@ function logDebtEntry(kind, debtId = null, fromBattle = false, prefill = {}, onD
   if (!fixed && !options.length) return toast('Add a debt first.');
   const first = fixed || monsters().find((m) => m.id === options[0].value);
   const sheet = openForm({
+    lead: fixed ? dioramaHtml(fixed, 'short') : '',
+    className: fixed ? 'debt-sheet' : '',
     title: isAttack ? (fixed ? `Pay ${fixed.name}` : 'Log a debt payment') : (fixed ? `New charge on ${fixed.name}` : 'Log a new charge'),
     intro: isAttack ? 'A payment you made. Every coin is damage.' : 'New spending or fees on a debt. It heals the monster.',
     fields: [
@@ -1369,6 +1385,7 @@ function logDebtEntry(kind, debtId = null, fromBattle = false, prefill = {}, onD
       afterDebtEntry(kind, m, v.amount, res, fromBattle);
     },
   });
+  paintDioramas(sheet.el);
   if (isAttack) {
     // live preview of how hard the payment hits
     const input = sheet.el.querySelector('input[name=amount]');
@@ -1448,14 +1465,16 @@ function openDebt(id, hit = 0) {
   const paid = own.filter((e) => e.kind === 'payment').reduce((s, e) => s - e.amount, 0);
   const interest = own.filter((e) => e.kind === 'interest').reduce((s, e) => s + e.amount, 0);
   const html = `
-    <div class="arena ${hit > 0 ? 'hit' : hit < 0 ? 'heal' : ''}">
-      ${spriteCanvas(m.species.key, m.temper.key, 10, m.alive ? '' : 'dead', m.dmg)}
+    <div class="dio-wrap ${hit > 0 ? 'hit' : hit < 0 ? 'heal' : ''}">
+      ${dioramaHtml(m)}
       ${hit ? `<span class="dmg ${hit < 0 ? 'heal' : ''}">${hit > 0 ? '−' : '+'}${fmt(Math.abs(hit))}</span>` : ''}
     </div>
-    <h2>${esc(m.name)}</h2>
-    <p class="hint">${m.alive ? `${m.temper.name} ${m.species.name}` : 'Defeated'} · ${typeLabel(m.type)}${m.include ? '' : ' · Benched'}</p>
-    ${hpBar(m.hpPct, `${fmt(Math.max(0, m.balance))} owed`, m.boss && m.alive)}
-    <p class="hint paid-line">Paid ${fmt(Math.max(0, m.maxHp - Math.max(0, m.balance)))} of ${fmt(m.maxHp)}</p>
+    <div class="debt-head">
+      <h2>${esc(m.name)}</h2>
+      <p class="sub">${debtSubline(m)}${m.alive ? '' : ' · Paid off'}${m.include ? '' : ' · Benched'}</p>
+      ${hpBar(m.hpPct, `${fmt(Math.max(0, m.balance))} owed`, m.boss && m.alive)}
+      <p class="sub">Total paid: <em>${fmt(totalPaid(m))}</em></p>
+    </div>
     ${m.missed ? `<p class="bad">Missed payment: less than the minimum was paid for the ${dayLabel(m.missed.due)} due date. Late fees and a higher rate may follow.</p>` : ''}
     ${m.regen ? `<p class="bad">It heals ${fmt(m.monthly)} a month but the minimum only hits for ${fmt(m.minPayment)}. Pay more than the minimum to make progress.</p>` : ''}
     ${m.promo ? `<p class="hint">Promo rate: ${m.apr}% until ${dayLabel(m.promo.ends)}, then ${m.promo.after}%.</p>` : ''}
@@ -1485,6 +1504,7 @@ function openDebt(id, hit = 0) {
     <p class="hint">Started at ${fmt(m.startBalance)} on ${dayLabel(m.createdAt)}.</p>`;
 
   const sheet = openSheet(html, {
+    className: 'debt-sheet',
     className: 'debt',
     onAction: (action, el, { close }) => {
       if (action === 'del-ledger') {
@@ -1509,6 +1529,7 @@ function openDebt(id, hit = 0) {
     },
   });
   paintSprites(sheet.el);
+  paintDioramas(sheet.el);
 }
 
 // ---------- spending & income ----------

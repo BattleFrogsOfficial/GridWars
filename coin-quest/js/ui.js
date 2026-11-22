@@ -149,9 +149,11 @@ function readField(form, f) {
  * fields: [{ name, label, type: text|money|percent|int|date|select|checkbox, value, required, positive, options, hint }]
  * onSubmit(values) may return an error string to keep the dialog open.
  * extra: [{ label, action, className }] additional buttons; onExtra(action, close) handles them.
+ * lead: HTML above the title (e.g. a picture); className: extra classes for the sheet.
  */
-export function openForm({ title, intro = '', fields, submitLabel = 'Save', onSubmit, extra = [], onExtra }) {
+export function openForm({ title, intro = '', fields, submitLabel = 'Save', onSubmit, extra = [], onExtra, lead = '', className = '' }) {
   const html = `
+    ${lead}
     <h2>${esc(title)}</h2>
     ${intro ? `<p class="intro">${intro}</p>` : ''}
     <form novalidate>
@@ -163,6 +165,7 @@ export function openForm({ title, intro = '', fields, submitLabel = 'Save', onSu
       </div>
     </form>`;
   const sheet = openSheet(html, {
+    className,
     onAction: (action, _el, { close }) => onExtra?.(action, close),
     // showModal() focuses [autofocus] right away; mark the first text/amount field so typing starts there.
     prepare: (dlg) => dlg.querySelector('form input:not([type=checkbox]):not([type=date]), form select')?.setAttribute('autofocus', ''),

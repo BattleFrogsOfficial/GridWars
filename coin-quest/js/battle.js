@@ -491,6 +491,30 @@ function runAttack(now) {
   }
 }
 
+// ---------- dioramas: the monster in its habitat, as a strip at the top of the Pay and Details sheets ----------
+const dioramas = new Map();
+/** Draw monster m (a fighter) standing in its habitat into canvas c, cropped to the monster. */
+export function drawDiorama(c, m) {
+  const key = `${m.type}|${m.temper}|${dmgOf(m)}`;
+  let d = dioramas.get(key);
+  if (!d) {
+    const scene = toCanvas(renderScene(m.type, SW, SH));
+    const frame = toCanvas(renderModel(m.type, m.temper, { w: SW, h: SH, framing: 'stage', t: 0.4, damage: dmgOf(m), shadow: false }));
+    const g = scene.getContext('2d');
+    g.drawImage(shadowOf(m.type), 0, 0);
+    g.drawImage(frame, 0, 0);
+    const box = frameInfo(frame).box;
+    const top = Math.max(0, box.y0 - 10), bottom = Math.min(SH, Math.max(box.y1, GY()) + 12);
+    d = { scene, top, h: bottom - top };
+    dioramas.set(key, d);
+  }
+  c.width = SW;
+  c.height = d.h;
+  const g = c.getContext('2d');
+  g.imageSmoothingEnabled = false;
+  g.drawImage(d.scene, 0, d.top, SW, d.h, 0, 0, SW, d.h);
+}
+
 /** The attack a payment would make, for the payment form: stars only (names show during the attack). */
 export function attackPower(cents, peak, balance) {
   const tr = attackTier(cents, peak, balance);

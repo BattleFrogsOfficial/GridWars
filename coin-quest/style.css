@@ -579,3 +579,66 @@ main.battle-only {
   display: flex; flex-direction: column; justify-content: center;
 }
 .battle-empty { margin: 0; }
+
+/* ---------- pop-up sheets in the battle's pixel style ----------
+   Square corners, hard 3px outlines and bevels, flat colours. Sheets for a debt open with a strip of
+   its monster standing in its habitat, the same art as the Battle tab. */
+dialog.sheet {
+  border: 0; border-radius: 0;
+  background: #0c1026;
+  box-shadow: 0 -3px 0 #05060f, inset 0 3px 0 rgba(255, 255, 255, 0.08);
+}
+.sheet h2 { font-size: 20px; color: #fff; text-shadow: 0 2px 0 #000; }
+.sheet-x {
+  width: 36px; height: 36px; right: 12px; top: 12px; padding: 0;
+  font-size: 22px; line-height: 1; font-weight: 900; color: #fff; background: rgba(12, 16, 38, 0.85);
+  box-shadow: 0 -3px 0 #05060f, 0 3px 0 #05060f, -3px 0 0 #05060f, 3px 0 0 #05060f, inset 0 3px 0 rgba(255, 255, 255, 0.1);
+}
+.sheet .btn {
+  border: 0; border-radius: 0; min-height: 44px; margin: 3px;
+  background: #2c3766; color: #e6ebff; text-shadow: 0 1px 0 #000; font-weight: 900;
+  box-shadow: 0 -3px 0 #05060f, 0 3px 0 #05060f, -3px 0 0 #05060f, 3px 0 0 #05060f, inset 0 3px 0 #4a5a9a, inset 0 -3px 0 #161d40;
+}
+.sheet .btn.primary { background: #f2b632; color: #3a1d00; text-shadow: 0 1px 0 #ffe08a;
+  box-shadow: 0 -3px 0 #2b1600, 0 3px 0 #2b1600, -3px 0 0 #2b1600, 3px 0 0 #2b1600, inset 0 4px 0 #ffe08a, inset 0 -4px 0 #b86e12; }
+.sheet .btn.bad { background: #b8322c; color: #fff;
+  box-shadow: 0 -3px 0 #2a0505, 0 3px 0 #2a0505, -3px 0 0 #2a0505, 3px 0 0 #2a0505, inset 0 3px 0 #e2665f, inset 0 -3px 0 #7a1814; }
+.sheet .btn:active:not(:disabled) { transform: translateY(2px); }
+.sheet .row-buttons { gap: 8px; }
+.sheet input, .sheet select {
+  border: 0; border-radius: 0; background: #151b3d; margin: 3px 0;
+  box-shadow: 0 -3px 0 #05060f, 0 3px 0 #05060f, -3px 0 0 #05060f, 3px 0 0 #05060f, inset 0 3px 0 rgba(0, 0, 0, 0.35);
+}
+.sheet input[type=checkbox] { box-shadow: none; }
+.sheet input:focus, .sheet select:focus { outline: 3px solid var(--gold); outline-offset: 3px; }
+.sheet .stats > div { border-radius: 0; background: #151b3d; box-shadow: inset 0 3px 0 rgba(255, 255, 255, 0.05), inset 0 -3px 0 rgba(0, 0, 0, 0.35); }
+.sheet .hp { height: 20px; margin: 8px 3px 4px; border: 0; border-radius: 0; box-shadow: 0 -3px 0 #05060f, 0 3px 0 #05060f, -3px 0 0 #05060f, 3px 0 0 #05060f; }
+.sheet .hp-fill { border-right: 0; background: #3aa55a; box-shadow: inset 0 3px 0 #7ee08e, inset 0 -3px 0 #23803e, inset -2px 0 0 #0e3a1e; }
+.sheet .hp span { line-height: 20px; }
+
+/* the monster in its habitat at the top of a debt's sheet, edge to edge */
+.diorama {
+  display: block; width: calc(100% + 2 * max(16px, env(safe-area-inset-left, 0px))); max-width: none;
+  margin: -18px calc(-1 * max(16px, env(safe-area-inset-left, 0px))) 14px;
+  height: auto; max-height: 260px; object-fit: cover; object-position: 50% 65%;
+  image-rendering: pixelated; image-rendering: crisp-edges;
+  box-shadow: 0 3px 0 #05060f;
+}
+.diorama.short { height: 150px; max-height: none; object-position: 50% 12%; }
+.dio-wrap { position: relative; }
+.dio-wrap.hit .diorama { animation: shake 0.4s steps(4); }
+.dio-wrap .dmg { left: 0; right: 0; top: 24px; text-align: center; font-size: 30px; }
+.debt-sheet h2 { padding-right: 0; margin-bottom: 2px; }
+.debt-head { text-align: center; margin-bottom: 12px; }
+.debt-head .sub, .debt-sheet > .hint { margin: 2px 0; font-size: 13px; font-weight: 700; color: #b9c3e6; font-variant-numeric: tabular-nums; }
+.debt-head .sub em { font-style: normal; color: var(--gold); font-weight: 900; }
+.debt-sheet > h2, .debt-sheet > .hint { text-align: center; }
+
+/* Pay sheet choices: a gold block for the minimum, a slate one for a custom amount */
+.pay-choice {
+  border: 0; border-radius: 0; margin: 3px 0; background: #2c3766; color: #e6ebff;
+  box-shadow: 0 -3px 0 #05060f, 0 3px 0 #05060f, -3px 0 0 #05060f, 3px 0 0 #05060f, inset 0 3px 0 #4a5a9a, inset 0 -4px 0 #161d40;
+}
+.pay-choice.primary { background: #f2b632; color: #3a1d00;
+  box-shadow: 0 -3px 0 #2b1600, 0 3px 0 #2b1600, -3px 0 0 #2b1600, 3px 0 0 #2b1600, inset 0 4px 0 #ffe08a, inset 0 -5px 0 #b86e12; }
+.pay-choice b { text-transform: uppercase; letter-spacing: 0.06em; font-size: 15px; }
