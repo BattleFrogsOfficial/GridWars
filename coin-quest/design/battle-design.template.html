@@ -457,6 +457,8 @@ function loop(now) {
   }
   const hit = now < hitUntil;
   if (atk) runAttack(now);
+  const v = atk ? atk.A.view() : null;
+  stage.style.transform = v ? `translate(${(v.x * 3).toFixed(1)}px, ${(v.y * 3).toFixed(1)}px) scale(${v.zoom.toFixed(3)})` : '';
   compose(sg, cur, offset, time, { hit, flash: hit && now < hitUntil - 260, atk: atk && atk.A, box: atk && atk.info.box });
   if (frameFor(DEBTS[cur], time)) document.getElementById('summon')?.remove();
   requestAnimationFrame(loop);

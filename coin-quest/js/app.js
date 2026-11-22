@@ -17,16 +17,12 @@ import {
   goalStatus, sourceMonthly,
 } from './budget.js';
 import { dueRecurring } from './recurring.js';
-import {
-  newAchievements, ACHIEVEMENTS, ACHIEVEMENT_XP, questStatus, QUEST_XP, weekStart, bossPhasesCrossed, BOSS_PHASE_XP, SKINS, unlockedSkins, unlockedTitles,
-} from './game.js';
-import { XP, attackXp, levelInfo, streak } from './player.js';
 import { uid, emptyState, normalizeState } from './state.js';
 import { loadState, saveState, requestPersistence, downloadBackup, readBackup, hadLoadProblem } from './storage.js';
 import { drawSprite } from './sprites.js';
 import { MODELS, renderModel, renderPortrait, damageLevel } from './models.js';
 import { esc, toast, holdToasts, openSheet, openForm, askConfirm } from './ui.js';
-import { battleMarkup, mountBattle, playAttack, battleKey, attackPower, battlePop } from './battle.js';
+import { battleMarkup, mountBattle, playAttack, battleKey, attackPower } from './battle.js';
 import { lineChart, attachCharts, SERIES_COLORS } from './chart.js';
 import { ACCOUNT_TYPES, accountEvents, accountBalances, totalsByType, accountActivity } from './accounts.js';
 import { moneyTimeline } from './projection.js';
@@ -48,7 +44,6 @@ function save() {
 
 function commit(fn) {
   fn(state);
-  checkAchievements();
   save();
   render();
 }
@@ -89,28 +84,12 @@ function showUndo(label) {
   }, 7000);
 }
 
-/** Record achievements earned by the latest change, with XP and a toast. */
-function checkAchievements() {
-  const today = todayISO();
-  for (const a of newAchievements(state, today)) {
-    state.player.achievements[a.id] = today;
-    gainXp(ACHIEVEMENT_XP);
-    setTimeout(() => toast(`Achievement: ${a.title}! +${ACHIEVEMENT_XP} XP`, 'good'), 300);
-  }
-}
-
 function markActive() {
   const t = todayISO();
   if (!state.player.days.includes(t)) state.player.days.push(t);
   if (state.player.days.length > 400) state.player.days = state.player.days.slice(-400);
 }
 
-function gainXp(n) {
-  const before = levelInfo(state.player.xp).level;
-  state.player.xp += n;
-  const after = levelInfo(state.player.xp).level;
-  if (after > before) setTimeout(() => toast(`LEVEL UP! You are now level ${after}.`, 'good'), 600);
-}
 
 /** Add any interest that came due while the app was closed. */
 function runAccrual() {
@@ -315,7 +294,6 @@ function planView() {
 
   const paidAll = state.ledger.filter((e) => e.kind === 'payment').reduce((s, e) => s - e.amount, 0);
   const interestAll = state.ledger.filter((e) => e.kind === 'interest').reduce((s, e) => s + e.amount, 0);
-  const lv = levelInfo(state.player.xp);
   const history = [5, 4, 3, 2, 1, 0].map((k) => {
     const ym = addMonths(now, -k);
     const m = summary(ym);
@@ -399,15 +377,10 @@ function planView() {
       <div class="stats">
         <div><small>Paid so far</small><b>${fmt(paidAll)}</b></div>
         <div><small>Interest added</small><b>${fmt(interestAll)}</b></div>
-        <div><small>Defeated</small><b>${ms.filter((m) => !m.alive).length} of ${ms.length}</b></div>
-        <div><small>Level</small><b>${lv.level}</b></div>
-        <div><small>Streak</small><b>${((n) => `${n} day${n === 1 ? '' : 's'}`)(streak(state.player.days, todayISO()))}</b></div>
-        <div><small>Days logged</small><b>${state.player.days.length}</b></div>
+        <div><small>Paid off</small><b>${ms.filter((m) => !m.alive).length} of ${ms.length}</b></div>
       </div>
     </section>
-    ${heroCard()}
-    ${questCard()}
-    ${achievementsCard()}
+
     <section class="card">
       <h2>Last 6 months</h2>
       <div class="legend"><span><i class="sw-income"></i>Income</span><span><i class="sw-spent"></i>Spent</span></div>
@@ -720,59 +693,6 @@ function monsterCard(m) {
     </button>`;
 }
 
-function questCard() {
-  const qs = questStatus(state, todayISO());
-  return `
-    <section class="card">
-      <h2>This week's quests</h2>
-      <ul class="quests">${qs.map((q) => `
-        <li class="${q.done ? 'done' : ''}">
-          <span class="grow">${esc(q.title)}<small>${q.claimed ? 'Reward claimed' : q.goal > 1 ? `${q.value} of ${q.goal}` : q.done ? 'Complete!' : 'Not yet'}</small>
-            ${q.goal > 1 ? `<span class="meter"><span style="display:block;height:100%;width:${(q.value / q.goal) * 100}%;background:var(--gold)"></span></span>` : ''}</span>
-          ${q.done && !q.claimed ? `<button class="btn primary" data-action="claim-quest" data-key="${q.id}">+${QUEST_XP} XP</button>` : ''}
-        </li>`).join('')}</ul>
-      <p class="hint">New quests every Monday.</p>
-    </section>`;
-}
-
-function achievementsCard() {
-  const got = ACHIEVEMENTS.filter((a) => state.player.achievements[a.id]).length;
-  return `
-    <section class="card">
-      <h2>Achievements <small>${got} of ${ACHIEVEMENTS.length}</small></h2>
-      <ul class="achievements">${ACHIEVEMENTS.map((a) => {
-        const when = state.player.achievements[a.id];
-        return `<li class="${when ? 'got' : ''}"><b>${esc(a.title)}</b><small>${esc(a.desc)}${when ? ` · ${dayLabel(when)}` : ''}</small></li>`;
-      }).join('')}</ul>
-    </section>`;
-}
-
-/** Choose the hero's outfit (unlocked by level) and title (from achievements). */
-function openHero() {
-  const lv = levelInfo(state.player.xp).level;
-  const skins = unlockedSkins(state.player.xp);
-  const titles = unlockedTitles(state);
-  const sheet = openSheet(`
-    <h2>Your hero</h2>
-    <p class="hint">Level ${lv}. New outfits unlock as you level up; titles come from achievements.</p>
-    <h3>Outfit</h3>
-    <div class="skins">${SKINS.map((k) => `
-      <button class="skin ${state.player.skin === k.id ? 'on' : ''}" data-action="skin" data-key="${k.id}" ${skins.includes(k.id) ? '' : 'disabled'}>
-        ${spriteCanvas('hero', k.id, 3)}<small>${skins.includes(k.id) ? esc(k.name) : `Level ${k.level}`}</small>
-      </button>`).join('')}</div>
-    <h3>Title</h3>
-    ${titles.length ? `<div class="chips">${['', ...titles].map((t) => `<button class="chip ${(state.player.title || '') === t ? 'on' : ''}" data-action="title" data-key="${esc(t)}">${t ? esc(t) : 'None'}</button>`).join('')}</div>`
-      : '<p class="empty">Earn achievements to unlock titles.</p>'}`, {
-    onAction: (action, el, { close }) => {
-      close();
-      if (action === 'skin') commit((s) => (s.player.skin = el.dataset.key));
-      if (action === 'title') commit((s) => (s.player.title = el.dataset.key || null));
-      openHero();
-    },
-  });
-  paintSprites(sheet.el);
-}
-
 /** A monster as the battle stage shows it. */
 function fighterOf(m) {
   const warn = m.missed ? [`Missed the ${dayLabel(m.missed.due)} payment! Pay it to calm it down`, true]
@@ -840,22 +760,6 @@ function battleView() {
         <div class="row-buttons"><button class="btn primary" data-action="add-debt">Add a debt</button>
         ${state.settings.setupDone ? '' : '<button class="btn" data-action="goto" data-tab="setup">Set up your account</button>'}</div>
       </section>`}`;
-}
-
-/** Your hero: level, streak and outfit (on the Planning tab with the stats). */
-function heroCard() {
-  const lv = levelInfo(state.player.xp);
-  const st = streak(state.player.days, todayISO());
-  return `
-    <button class="card hero" data-action="hero">
-      ${spriteCanvas('hero', state.player.skin, 4)}
-      <div class="grow">
-        <div class="hero-line"><strong>Level ${lv.level}</strong><span>${st} day streak</span></div>
-        ${state.player.title ? `<small class="hero-title">${esc(state.player.title)}</small>` : ''}
-        <div class="xp" role="meter" aria-label="Experience" aria-valuenow="${lv.into}" aria-valuemax="${lv.span}"><div style="width:${(lv.into / lv.span) * 100}%"></div></div>
-        <small>${lv.toNext} XP to level ${lv.level + 1} · tap to change outfit</small>
-      </div>
-    </button>`;
 }
 
 /** "Add to Home Screen" help, on the Settings tab until the app is installed. */
@@ -1481,7 +1385,7 @@ function logDebtEntry(kind, debtId = null, fromBattle = false, prefill = {}, onD
   }
 }
 
-/** Save a payment (attack) or charge on monster m. Returns { error } or { killed, xp }. */
+/** Save a payment (attack) or charge on monster m. Returns { error } or { killed }. */
 function saveDebtEntry(kind, m, v, onDone = null) {
   const isAttack = kind === 'payment';
   if (isAttack && v.amount > m.balance) return { error: `That's more than what's owed (${fmt(m.balance)}).` };
@@ -1492,19 +1396,9 @@ function saveDebtEntry(kind, m, v, onDone = null) {
     markActive();
     onDone?.(s);
     if (isAttack) {
-      gainXp(attackXp(v.amount));
       const d = s.debts.find((x) => x.id === m.id);
-      if (m.boss) {
-        const crossed = bossPhasesCrossed(m.maxHp, m.balance, m.balance - v.amount, d.bossPhases);
-        if (crossed.length && m.balance - v.amount > 0) {
-          d.bossPhases.push(...crossed);
-          gainXp(BOSS_PHASE_XP * crossed.length);
-          setTimeout(() => toast(`Boss staggered! ${m.name} is below ${Math.min(...crossed)}% of what was owed. +${BOSS_PHASE_XP * crossed.length} XP`, 'good'), 400);
-        }
-      }
       if (m.balance - v.amount <= 0 && !d.killRewarded) {
         d.killRewarded = true;
-        gainXp(XP.kill[m.species.key] || 100);
         killed = true;
       }
     }
@@ -1515,14 +1409,11 @@ function saveDebtEntry(kind, m, v, onDone = null) {
 /** After saving: on the Battle tab a payment plays its attack on the stage; elsewhere a toast (and the hit on the debt's sheet). */
 function afterDebtEntry(kind, m, amount, { killed }, fromBattle) {
   const isAttack = kind === 'payment';
-  const msg = killed ? `VICTORY! ${m.name} is defeated! +${XP.kill[m.species.key] || 100} XP`
-    : isAttack ? `Hit ${m.name} for ${fmt(amount)}! +${attackXp(amount)} XP` : `${m.name} healed ${fmt(amount)}.`;
+  const msg = killed ? `${m.name} is paid off!` : isAttack ? `Paid ${fmt(amount)} toward ${m.name}.` : `${fmt(amount)} added to ${m.name}.`;
   if (isAttack && fromBattle && route() === 'battle' && document.getElementById('b-stage') && m.include) {
     holdToasts(true);
-    const xp = attackXp(amount) + (killed ? XP.kill[m.species.key] || 100 : 0);
     playAttack(fighterOf(m), amount, () => {
       render();
-      battlePop(`+${xp} XP`);
       holdToasts(false);
     });
     return;
@@ -1543,7 +1434,6 @@ function scoutDebt(m) {
       commit((s) => {
         s.ledger.push({ id: uid(), debtId: m.id, kind: 'correction', amount: delta, date: todayISO(), note: '', auto: false });
         markActive();
-        gainXp(XP.scout);
       });
       openDebt(m.id);
     },
@@ -1569,7 +1459,6 @@ function openDebt(id, hit = 0) {
     ${m.regen ? `<p class="bad">It heals ${fmt(m.monthly)} a month but the minimum only hits for ${fmt(m.minPayment)}. Pay more than the minimum to make progress.</p>` : ''}
     ${m.promo ? `<p class="hint">Promo rate: ${m.apr}% until ${dayLabel(m.promo.ends)}, then ${m.promo.after}%.</p>` : ''}
     ${m.paused ? `<p class="hint">Payments paused until ${dayLabel(m.pauseUntil)}. Interest ${m.pauseAccrues ? `builds up${m.capitalize ? ' and is added to the balance when the pause ends' : ''}` : "doesn't build up"}.</p>` : ''}
-    ${m.boss && m.alive ? `<p class="hint">Boss: bonus XP when it drops below 75%, 50% and 25% of the most it was.</p>` : ''}
     <div class="stats">
       <div><small>APR</small><b>${m.rate}%</b></div>
       <div><small>Interest / mo</small><b>${fmt(m.monthly)}</b></div>
@@ -1642,9 +1531,8 @@ function addIncome() {
       commit((s) => {
         s.incomes.push({ id: uid(), amount: v.amount, source: v.source || '', date: v.date, note: '', accountId: v.accountId || null });
         markActive();
-        gainXp(XP.log);
       });
-      toast(`+${fmt(v.amount)} gold. +${XP.log} XP`, 'good');
+      toast(`+${fmt(v.amount)} logged.`, 'good');
     },
   });
 }
@@ -1718,13 +1606,12 @@ function expenseForm(existing = null, prefill = {}, onDone = null) {
         s.expenses.push(e);
         syncCardCharge(s, e);
         markActive();
-        gainXp(XP.log);
         onDone?.(s);
       });
       const cat = summary(ymOf(v.date)).categories.find((c) => c.id === v.categoryId);
       const over = cat && cat.limit > 0 && cat.remaining < 0;
       const card = debtId ? state.debts.find((d) => d.id === debtId)?.name : null;
-      toast(over ? `${cat.name} is over budget by ${fmt(-cat.remaining)}` : card ? `Logged on ${card}. It grew by ${fmt(v.amount)}.` : `Logged. +${XP.log} XP`, over || card ? 'bad' : '');
+      toast(over ? `${cat.name} is over budget by ${fmt(-cat.remaining)}` : card ? `Logged on ${card}. It grew by ${fmt(v.amount)}.`   : 'Logged.', over || card ? 'bad' : '');
     },
   });
 }
@@ -2616,15 +2503,6 @@ function onClick(e) {
       else if (t === 'ledger') editLedgerEntry(state.ledger.find((x) => x.id === id));
       else editIncome(state.incomes.find((x) => x.id === id));
     },
-    hero: openHero,
-    'claim-quest': () => {
-      const ws = weekStart(todayISO());
-      commit((s) => {
-        s.player.quests[ws] = [...(s.player.quests[ws] || []), a.dataset.key];
-        gainXp(QUEST_XP);
-      });
-      toast(`Quest complete! +${QUEST_XP} XP`, 'good');
-    },
     'report-range': () => {
       ui.reportMonths = Number(a.dataset.key);
       render();
@@ -2680,7 +2558,6 @@ async function onChange(e) {
       state = restored;
       runAccrual();
       runRecurring();
-      checkAchievements();
       save();
       render();
       toast('Backup restored.', 'good');
@@ -2719,7 +2596,6 @@ async function boot() {
   if (hadLoadProblem()) setTimeout(() => toast('Your saved data could not be read. A copy was kept safe; restore a backup in Settings.', 'bad'), 500);
   runAccrual();
   runRecurring();
-  checkAchievements();
   document.addEventListener('click', onClick);
   document.addEventListener('change', onChange);
   document.addEventListener('keydown', battleKey);

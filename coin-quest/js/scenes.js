@@ -51,12 +51,13 @@ export const HABITATS = {
  * The backdrop for a monster type. The horizon sits a little above the middle; the floor runs toward a
  * vanishing point in the centre so it reads as first person.
  */
-export function renderScene(type, w = 120, h = 168) {
+/** opts.hy: the horizon row (default 55% down), so a taller backdrop can keep the monster's perspective. */
+export function renderScene(type, w = 120, h = 168, opts = {}) {
   const H = HABITATS[type] || HABITATS.slime;
   const sky = H.sky.map(shex), far = shex(H.far), near = shex(H.near), fog = shex(H.fog), path = shex(H.path);
   const ground = H.ground.map(shex);
   const data = new Uint8ClampedArray(w * h * 4);
-  const hy = Math.round(h * 0.55);
+  const hy = opts.hy ?? Math.round(h * 0.55);
   const seed = type.length * 7.3;
   const put = (x, y, c) => {
     if (x < 0 || y < 0 || x >= w || y >= h) return;

@@ -6,7 +6,6 @@ import { addMonths, dueDateIn, addDays, isValidISO } from '../js/dates.js';
 import { balanceOf, monthlyInterest, isRegenerating, pendingInterest, tierFor, temperFor, speciesFor } from '../js/debts.js';
 import { simulatePayoff } from '../js/planner.js';
 import { monthSummary, monthlyPlan, toMonthly, suggestSplit, DEBT_CATEGORY_ID, OTHER_CATEGORY_ID } from '../js/budget.js';
-import { levelInfo, streak, xpForLevel, attackXp } from '../js/player.js';
 import { emptyState, normalizeState } from '../js/state.js';
 import { SPRITES } from '../js/sprites.js';
 
@@ -162,17 +161,6 @@ test('suggestSplit never exceeds what is left and weights the goals', () => {
   assert.ok(split.debt > split.emergency && split.emergency > split.fun);
   Object.values(split).forEach((v) => assert.equal(v % 500, 0));
   assert.deepEqual(suggestSplit(-100, ['debt']), { debt: 0 });
-});
-
-test('levels and streaks', () => {
-  assert.equal(levelInfo(0).level, 1);
-  assert.equal(levelInfo(xpForLevel(2)).level, 2);
-  assert.equal(levelInfo(xpForLevel(5) - 1).level, 4);
-  assert.equal(attackXp(100), 10);
-  assert.equal(attackXp(10_000_000), 60);
-  assert.equal(streak(['2026-11-19', '2026-11-20', '2026-11-21'], '2026-11-21'), 3);
-  assert.equal(streak(['2026-11-19', '2026-11-20'], '2026-11-21'), 2);
-  assert.equal(streak(['2026-11-18'], '2026-11-21'), 0);
 });
 
 test('normalizeState rejects foreign files, cleans bad values and migrates v1', () => {
@@ -474,32 +462,6 @@ test('v5 fields survive a save round trip and bad values are cleaned', () => {
   assert.equal(bad.debts[0].promoEnds, null);
   assert.deepEqual(bad.debts[0].bossPhases, []);
   assert.deepEqual(bad.categories[0].overrides, {});
-});
-
-test('game: achievements, weekly quests, boss phases, skins', async () => {
-  const g = await import('../js/game.js');
-  const s = emptyState();
-  assert.deepEqual(g.newAchievements(s, '2026-11-21').map((a) => a.id), []);
-  s.debts.push({ id: 'd', name: 'Card', startBalance: 150000, minPayment: 5000 });
-  s.ledger.push({ id: 'p', debtId: 'd', kind: 'payment', amount: -150000, date: '2026-11-20' });
-  const ids = g.newAchievements(s, '2026-11-21').map((a) => a.id);
-  assert.deepEqual(ids, ['first-debt', 'first-hit', 'dmg-1k', 'first-kill']);
-  s.player.achievements['first-debt'] = '2026-11-21';
-  assert.ok(!g.newAchievements(s, '2026-11-21').some((a) => a.id === 'first-debt'));
-  // Weeks start on Monday; quests are stable within a week
-  assert.equal(g.weekStart('2026-11-21'), '2026-11-16'); // a Saturday
-  assert.equal(g.weekStart('2026-11-16'), '2026-11-16');
-  assert.deepEqual(g.weeklyQuests('2026-11-16'), g.weeklyQuests('2026-11-16'));
-  assert.equal(new Set(g.weeklyQuests('2026-11-16')).size, 3);
-  const qs = g.questStatus(s, '2026-11-21');
-  assert.equal(qs.length, 3);
-  // Boss phases
-  assert.deepEqual(g.bossPhasesCrossed(100000, 80000, 40000), [75, 50]);
-  assert.deepEqual(g.bossPhasesCrossed(100000, 80000, 40000, [75]), [50]);
-  assert.deepEqual(g.bossPhasesCrossed(100000, 20000, 10000), []);
-  // Skins by level
-  assert.deepEqual(g.unlockedSkins(0), ['adventurer']);
-  assert.ok(g.unlockedSkins(100000).includes('champion'));
 });
 
 test('monster type comes from the peak balance; paying down only adds damage', async () => {

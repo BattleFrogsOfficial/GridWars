@@ -45,7 +45,6 @@ GitHub Pages on a private repository needs a paid GitHub plan.
 | Budget options | One-month amounts, rollover of unspent money, savings deadlines (needed per month), irregular income averaged from recorded paydays |
 | Editing | Every logged item can be edited; deletes and big changes can be undone for 7 seconds |
 | Battle tab | Only the battle: one debt at a time in first person, swipe to the next. Pay offers the minimum in one tap or a custom amount; the attack plays on the stage. Attack names show only during the attack; the payment form shows its power as stars |
-| Game | Achievements, weekly quests, boss (biggest debt) with HP-phase bonuses, missed-payment and overspending reactions, hero outfits and titles |
 | Privacy lock | Passcode (salted SHA-256) and optional Face ID / fingerprint (WebAuthn). A privacy screen, not encryption |
 | Transfer code | The whole save as gzip+base64 text to copy to another device |
 | Save | One JSON document in IndexedDB. Backup = download that JSON; restore validates it first |
@@ -61,10 +60,8 @@ GitHub Pages on a private repository needs a paid GitHub plan.
 | `js/accounts.js` | Account balances, activity and history (current situation) |
 | `js/projection.js` | Month-by-month actuals and projection for the chart |
 | `js/recurring.js` | Paydays and bills posting on their dates |
-| `js/game.js` | Achievements, quests, boss phases, skins |
 | `js/lock.js` | Passcode hashing, WebAuthn, transfer codes |
 | `js/chart.js` | SVG line chart with tap/hover tooltip |
-| `js/player.js` | XP, levels, streaks |
 | `js/state.js` | Save-file shape, validation, migrations |
 | `js/storage.js` | IndexedDB, backup/restore |
 | `js/sprites.js` | Hero sprite as a text grid + palettes |

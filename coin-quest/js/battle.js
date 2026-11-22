@@ -14,6 +14,9 @@ const FLAP = [0, 0.49, 0.98, 1.47]; // a full wing beat for the flying dragon
 const B = { list: [], cur: 0, curId: null, els: null, fmt: (c) => String(c), hooks: {}, drag: null, slide: null, atk: null, running: false, lastNow: 0, motes: [] };
 let groundRow = null;
 const GY = () => groundRow ?? (groundRow = Math.round(stageGroundRow() * SH));
+// The battle fills the screen. The canvas is sized to it in art pixels (cw x ch) at scale k, where k keeps
+// the monster the size it had on the framed stage; the 120x168 monster frame sits at (ox, oy).
+const L = { cw: SW, ch: SH, k: 3, ox: 0, oy: 0, hy: Math.round(SH * 0.55) };
 
 // ---------- frames: one stage render per type, temper, damage level and (for the flyer) wing beat ----------
 const frames = new Map();
@@ -77,7 +80,11 @@ function whiteOf(cv) {
   return c;
 }
 const sceneCache = new Map();
-const sceneOf = (type) => sceneCache.get(type) || (sceneCache.set(type, toCanvas(renderScene(type, SW, SH))), sceneCache.get(type));
+function sceneOf(type) {
+  const k = `${type}|${L.cw}|${L.ch}|${L.hy}`;
+  if (!sceneCache.has(k)) sceneCache.set(k, toCanvas(renderScene(type, L.cw, L.ch, { hy: L.hy })));
+  return sceneCache.get(k);
+}
 const portraitCache = new Map();
 function portraitOf(m) {
   const k = `${m.type}|${m.temper}|${dmgOf(m)}`;
@@ -109,16 +116,17 @@ function frameInfo(cv) {
 // ---------- ambient particles per habitat ----------
 const AMBIENT = { fireflies: ['#e8ff8a', '#a8e060'], embers: ['#ffb040', '#ff6a1a'], mist: ['#c8d0e8', '#9aa4c4'], snow: ['#ffffff', '#c8d4f0'] };
 function seedMotes(kind) {
-  B.motes = Array.from({ length: kind === 'mist' ? 26 : 18 }, () => ({ x: Math.random() * SW, y: Math.random() * SH * 0.9, p: Math.random() * 6.28, s: 0.3 + Math.random() * 0.7 }));
+  const n = Math.round((kind === 'mist' ? 26 : 18) * (L.cw * L.ch) / (SW * SH));
+  B.motes = Array.from({ length: n }, () => ({ x: Math.random() * L.cw, y: Math.random() * L.ch * 0.9, p: Math.random() * 6.28, s: 0.3 + Math.random() * 0.7 }));
 }
 function drawMotes(g, kind, time) {
   const cols = AMBIENT[kind];
   if (!cols) return;
   for (const q of B.motes) {
     if (kind === 'fireflies') { q.x += Math.sin(time * 0.8 + q.p) * 0.15; q.y += Math.cos(time * 0.6 + q.p) * 0.1; if (Math.sin(time * 3 + q.p) < 0.2) continue; }
-    if (kind === 'embers') { q.y -= 0.25 * q.s; q.x += Math.sin(time + q.p) * 0.12; if (q.y < 0) { q.y = SH; q.x = Math.random() * SW; } }
-    if (kind === 'snow') { q.y += 0.2 * q.s; q.x += Math.sin(time * 0.7 + q.p) * 0.1; if (q.y > SH) { q.y = 0; q.x = Math.random() * SW; } }
-    if (kind === 'mist') { q.x += 0.08 * q.s; if (q.x > SW + 6) q.x = -6; q.y = SH * 0.5 + Math.sin(q.p) * 10; }
+    if (kind === 'embers') { q.y -= 0.25 * q.s; q.x += Math.sin(time + q.p) * 0.12; if (q.y < 0) { q.y = L.ch; q.x = Math.random() * L.cw; } }
+    if (kind === 'snow') { q.y += 0.2 * q.s; q.x += Math.sin(time * 0.7 + q.p) * 0.1; if (q.y > L.ch) { q.y = 0; q.x = Math.random() * L.cw; } }
+    if (kind === 'mist') { q.x += 0.08 * q.s; if (q.x > L.cw + 6) q.x = -6; q.y = L.hy - 8 + Math.sin(q.p) * 10; }
     g.fillStyle = cols[(q.p * 10 | 0) % 2];
     if (kind === 'mist') { g.globalAlpha = 0.18; g.fillRect(Math.round(q.x) - 4, Math.round(q.y), 9, 2); g.globalAlpha = 1; }
     else g.fillRect(Math.round(q.x), Math.round(q.y), 1, 1);
@@ -133,11 +141,11 @@ function drawMonster(g, m, cv, x, turn, time, o = {}) {
   if (o.xf) {
     const xf = o.xf;
     if (xf.dissolve >= 1) return;
-    if (!tmp) { tmp = document.createElement('canvas'); tmp.width = SW; tmp.height = SH; }
+    if (!tmp || tmp.width !== L.cw || tmp.height !== L.ch) { tmp = document.createElement('canvas'); tmp.width = L.cw; tmp.height = L.ch; }
     const tg = tmp.getContext('2d');
     const target = xf.dissolve > 0 ? tg : g;
-    if (target === tg) { tg.clearRect(0, 0, SW, SH); tg.imageSmoothingEnabled = false; }
-    const px0 = SW / 2 + x, py0 = xf.pivotY;
+    if (target === tg) { tg.clearRect(0, 0, L.cw, L.ch); tg.imageSmoothingEnabled = false; }
+    const px0 = L.ox + SW / 2 + x, py0 = xf.pivotY;
     target.save();
     target.translate(Math.round(px0 + xf.dx), Math.round(py0 + xf.dy));
     target.rotate(xf.rot);
@@ -147,9 +155,9 @@ function drawMonster(g, m, cv, x, turn, time, o = {}) {
     target.restore();
     if (target === tg) {
       // dissolve from the top down, the edge glowing gold
-      const img = tg.getImageData(0, 0, SW, SH), a = img.data, b = o.box, hgt = Math.max(1, b.y1 - b.y0);
-      for (let y = 0; y < SH; y++) for (let xx = 0; xx < SW; xx++) {
-        const k = (y * SW + xx) * 4;
+      const img = tg.getImageData(0, 0, L.cw, L.ch), a = img.data, b = o.box, hgt = Math.max(1, b.y1 - b.y0);
+      for (let y = Math.max(0, b.y0 - 20); y < Math.min(L.ch, b.y1 + 20); y++) for (let xx = 0; xx < L.cw; xx++) {
+        const k = (y * L.cw + xx) * 4;
         if (!a[k + 3]) continue;
         const v = 0.5 * FX_B[((y >> 1) & 3) * 4 + ((xx >> 1) & 3)] + 0.5 * Math.min(1, Math.max(0, (y - b.y0) / hgt));
         const cut = xf.dissolve * 1.1;
@@ -166,7 +174,7 @@ function drawMonster(g, m, cv, x, turn, time, o = {}) {
   const bob = flyer(m) || m.type === 'castle' ? 0 : Math.round(Math.sin(time * 2.2) * 0.6);
   const w = Math.round(SW * sx * (1 - breathe * 0.6)), h = Math.round(SH * (1 + breathe));
   const gy = GY();
-  g.drawImage(o.white ? whiteOf(cv) : cv, Math.round(x + (SW - w) / 2), Math.round(gy - gy * (h / SH)) + bob, w, h);
+  g.drawImage(o.white ? whiteOf(cv) : cv, Math.round(L.ox + x + (SW - w) / 2), Math.round(L.oy + gy - gy * (h / SH)) + bob, w, h);
 }
 
 const shown = () => (B.atk ? B.atk.m : B.list[B.cur]);
@@ -175,25 +183,25 @@ function compose(g, offset, time) {
   const m = shown();
   if (!m) return;
   g.imageSmoothingEnabled = false;
-  g.clearRect(0, 0, SW, SH);
+  g.clearRect(0, 0, L.cw, L.ch);
   const dir = offset < 0 ? 1 : -1;
   const n = B.list.length > 1 ? B.list[(B.cur + dir + B.list.length) % B.list.length] : null;
-  const shift = offset * SW;
+  const shift = offset * L.cw;
   g.drawImage(sceneOf(m.type), Math.round(shift * 0.5), 0);
-  if (offset && n) g.drawImage(sceneOf(n.type), Math.round(shift * 0.5 + dir * SW), 0);
+  if (offset && n) g.drawImage(sceneOf(n.type), Math.round(shift * 0.5 + dir * L.cw), 0);
   drawMotes(g, HABITATS[m.type]?.particles, time);
   const A = B.atk?.A;
   if (A) {
     const dim = A.dim();
-    if (dim > 0.01) { g.globalAlpha = dim; g.fillStyle = '#05030c'; g.fillRect(0, 0, SW, SH); g.globalAlpha = 1; }
+    if (dim > 0.01) { g.globalAlpha = dim; g.fillStyle = '#05030c'; g.fillRect(0, 0, L.cw, L.ch); g.globalAlpha = 1; }
     A.drawBack(g);
-    drawMonster(g, m, B.atk.frame, 0, 0, time, { xf: A.monster(), box: B.atk.info.box });
+    drawMonster(g, m, B.atk.frame, 0, 0, time, { xf: A.monster(), box: B.atk.box });
     A.drawFront(g);
     return;
   }
   const a = Math.abs(offset);
   drawMonster(g, m, frameFor(m, time), shift * 1.1, a * 1.6, time);
-  if (offset && n) drawMonster(g, n, frameFor(n, time), dir * SW * 1.1 * Math.pow(1 - a, 1.6), (1 - a) * 1.4, time);
+  if (offset && n) drawMonster(g, n, frameFor(n, time), dir * L.cw * 0.9 * Math.pow(1 - a, 1.6), (1 - a) * 1.4, time);
 }
 
 // ---------- the HUD ----------
@@ -217,6 +225,7 @@ function renderHud() {
   e.hud.innerHTML = hudHtml(m);
   e.hud.querySelector('canvas').getContext('2d').drawImage(portraitOf(m), 0, 0);
   e.dots.innerHTML = B.list.length > 1 ? B.list.map((_, k) => `<i class="${k === B.cur ? 'on' : ''}"></i>`).join('') : '';
+  e.dots.style.top = `${e.hud.offsetTop + e.hud.offsetHeight + 8}px`;
   e.stage.setAttribute('aria-label', `${m.name}: ${m.speciesName}, ${B.fmt(Math.max(0, m.balance))} owed`);
 }
 function setBar(m, balance, drainSec, ghostDelay) {
@@ -274,6 +283,11 @@ export function mountBattle(root, fighters, fmt, hooks) {
     summon: root.querySelector('.b-summon'),
   };
   B.els.g = B.els.stage.getContext('2d');
+  layout();
+  if (!resizeHooked) {
+    resizeHooked = true;
+    addEventListener('resize', () => { if (B.els && document.body.contains(B.els.stage) && !B.atk) { layout(); seedMotes(HABITATS[shown()?.type]?.particles); renderHud(); } });
+  }
   root.classList.toggle('single', B.list.length < 2);
   root.querySelector('.b-arrow.l').onclick = () => turn(-1);
   root.querySelector('.b-arrow.r').onclick = () => turn(1);
@@ -311,6 +325,29 @@ export function mountBattle(root, fighters, fmt, hooks) {
   if (!B.running) { B.running = true; B.lastNow = performance.now(); requestAnimationFrame(loop); }
 }
 
+/** Size the canvas to the screen. The monster keeps its size; its feet sit just above Pay and Details. */
+function layout() {
+  const e = B.els;
+  const r = e.root.getBoundingClientRect();
+  if (!r.width || !r.height) return;
+  const k = Math.max(1.5, Math.min(r.width - 32, 460, (r.height - 24) * SW / SH) / SW);
+  const cw = Math.ceil(r.width / k), ch = Math.ceil(r.height / k);
+  const actions = e.root.querySelector('.b-actions');
+  const reserve = Math.ceil(((actions?.offsetHeight || 92) + 44) / k);
+  const feet = Math.min(ch - reserve, ch - 6);
+  Object.assign(L, { cw, ch, k, ox: Math.round((cw - SW) / 2), oy: feet - GY(), hy: feet - (GY() - Math.round(SH * 0.55)) });
+  const c = e.stage;
+  if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
+  const top = r.height - ch * k;
+  c.style.width = `${cw * k}px`;
+  c.style.height = `${ch * k}px`;
+  c.style.left = `${(r.width - cw * k) / 2}px`;
+  c.style.top = `${top}px`;
+  // where the monster's upper body is, for the attack's banner and damage number
+  e.root.style.setProperty('--mon-y', `${Math.round(top + (feet - 70) * k)}px`);
+}
+let resizeHooked = false;
+
 function turn(dir) {
   if (B.slide || B.atk || B.list.length < 2) return;
   const from = B.drag ? B.drag.offset : 0;
@@ -343,6 +380,9 @@ function loop(now) {
   }
   if (B.atk) runAttack(now);
   B.lastNow = now;
+  // screen shake and the zoom punch of an attack
+  const v = B.atk ? B.atk.A.view() : null;
+  e.stage.style.transform = v ? `translate(${(v.x * L.k).toFixed(1)}px, ${(v.y * L.k).toFixed(1)}px) scale(${v.zoom.toFixed(3)})` : '';
   compose(e.g, offset, time);
   if (e.summon && shown() && frameFor(shown(), time)) { e.summon.remove(); e.summon = null; }
   requestAnimationFrame(loop);
@@ -376,11 +416,12 @@ export function playAttack(m, cents, onDone) {
       if (performance.now() - t0 > 4000) return void onDone?.();
       return void setTimeout(start, 60);
     }
-    const info = frameInfo(frame);
+    const fi = frameInfo(frame);
+    const info = { box: { x0: fi.box.x0 + L.ox, y0: fi.box.y0 + L.oy, x1: fi.box.x1 + L.ox, y1: fi.box.y1 + L.oy }, palette: fi.palette, points: fi.points.map(([x, y]) => [x + L.ox, y + L.oy]) };
     const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
     const A = createAttack({ tier: tr.index, kill: tr.kill, type: m.type, box: info.box, palette: info.palette, points: info.points,
-      W: SW, H: SH, groundY: GY(), flying: flyer(m), reduced, seed: (Math.random() * 1e9) | 0 });
-    B.atk = { A, m: { ...m }, cents, tr, after, info, frame, onDone, shownBalance: m.balance };
+      W: L.cw, H: L.ch, groundY: L.oy + GY(), flying: flyer(m), reduced, seed: (Math.random() * 1e9) | 0 });
+    B.atk = { A, m: { ...m }, cents, tr, after, info, box: info.box, frame, onDone, shownBalance: m.balance };
     B.drag = null;
     B.slide = null;
     seedMotes(HABITATS[m.type]?.particles);
@@ -439,12 +480,6 @@ function runAttack(now) {
     setBusy(false);
     done?.();
   }
-}
-
-/** A short reward note that floats up on the stage (e.g. "+45 XP"). */
-export function battlePop(text) {
-  if (!B.els || !document.body.contains(B.els.stage)) return;
-  popText('b-xp', esc(text), 1800);
 }
 
 /** The attack a payment would make, for the payment form: stars only (names show during the attack). */
