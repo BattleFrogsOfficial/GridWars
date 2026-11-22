@@ -44,6 +44,7 @@ GitHub Pages on a private repository needs a paid GitHub plan.
 | Recurring posting | Income sources and bills with a next date and an account post automatically and roll forward |
 | Budget options | One-month amounts, rollover of unspent money, savings deadlines (needed per month), irregular income averaged from recorded paydays |
 | Editing | Every logged item can be edited; deletes and big changes can be undone for 7 seconds |
+| Battle tab | Only the battle: one debt at a time in first person, swipe to the next. Pay offers the minimum in one tap or a custom amount; the attack plays on the stage. Attack names show only during the attack; the payment form shows its power as stars |
 | Game | Achievements, weekly quests, boss (biggest debt) with HP-phase bonuses, missed-payment and overspending reactions, hero outfits and titles |
 | Privacy lock | Passcode (salted SHA-256) and optional Face ID / fingerprint (WebAuthn). A privacy screen, not encryption |
 | Transfer code | The whole save as gzip+base64 text to copy to another device |
@@ -69,6 +70,7 @@ GitHub Pages on a private repository needs a paid GitHub plan.
 | `js/sprites.js` | Hero sprite as a text grid + palettes |
 | `js/models.js` | 3D-modelled monsters (signed-distance shapes, ray marched into dithered, outlined pixel art) and framed portraits |
 | `js/battlefx.js` | Attack animations: five tiers by the share of full HP a payment takes off, plus a finishing blow; pixel effects on the battle stage, DOM moments as cues |
+| `js/battle.js` | The Battle tab: first-person stage, swiping between debts, money bar, Pay (minimum or custom) and attack playback |
 | `js/scenes.js` | First-person battle backdrops per monster type, sword and shield |
 | `design/` | Battle screen design page (`node tools/build-design.mjs design/battle-design.template.html out.html`) |
 | `js/ui.js`, `js/app.js` | Dialogs/forms, screens and actions |

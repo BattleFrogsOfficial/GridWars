@@ -521,7 +521,7 @@ function updatePreview() {
   const cents = Math.min(parseCents(amt.value), d.balance);
   const tr = attackTier(cents, d.peak, d.balance);
   document.getElementById('tierStars').textContent = '★'.repeat(tr.stars) + '☆'.repeat(5 - tr.stars);
-  document.getElementById('tierName').textContent = cents ? (tr.kill ? `${tr.name} + Final Blow` : tr.name) : 'Enter an amount';
+  document.getElementById('tierName').textContent = cents ? (tr.kill ? 'Pays it off' : 'Attack power') : 'Enter an amount';
   document.getElementById('tierShare').textContent = cents ? `${(tr.share * 100).toFixed(tr.share < 0.1 ? 1 : 0)}% of the debt` : '';
   document.getElementById('strike').disabled = !cents;
 }
@@ -532,7 +532,7 @@ function openSheet() {
   const minC = Math.min(d.balance, d.min || 0);
   const mt = attackTier(minC, d.peak, d.balance);
   document.getElementById('minAmt').textContent = money(minC);
-  document.getElementById('minTier').textContent = `${'★'.repeat(mt.stars)} ${mt.kill ? 'Final Blow' : mt.name}`;
+  document.getElementById('minTier').textContent = mt.kill ? '✦ Pays it off' : `${'★'.repeat(mt.stars)}${'☆'.repeat(5 - mt.stars)} ${(mt.share * 100).toFixed(mt.share < 0.1 ? 1 : 0)}% of the debt`;
   document.getElementById('payMin').disabled = !minC;
   const chips = SHARES.map((sh) => [`${sh * 100}%`, Math.min(d.balance, Math.max(100, Math.round((d.peak * sh) / 100) * 100))]);
   chips.push(['Pay it off', d.balance]);

@@ -1,0 +1,454 @@
+// The Battle tab's stage: a first-person view of one debt monster at a time in its habitat.
+// Swipe (or the arrows) to face the next one. A payment plays an attack (battlefx.js) on the stage.
+//
+// The app renders the markup (battleMarkup) and calls mountBattle after every render; this module keeps
+// its own state (which monster you're facing, the frame cache, a running attack) across re-renders.
+
+import { MODELS, renderModel, renderPortrait, stageGroundRow, damageLevel } from './models.js';
+import { renderScene, HABITATS } from './scenes.js';
+import { createAttack, attackTier } from './battlefx.js';
+import { esc } from './ui.js';
+
+const SW = 120, SH = 168;
+const FLAP = [0, 0.49, 0.98, 1.47]; // a full wing beat for the flying dragon
+const B = { list: [], cur: 0, curId: null, els: null, fmt: (c) => String(c), hooks: {}, drag: null, slide: null, atk: null, running: false, lastNow: 0, motes: [] };
+let groundRow = null;
+const GY = () => groundRow ?? (groundRow = Math.round(stageGroundRow() * SH));
+
+// ---------- frames: one stage render per type, temper, damage level and (for the flyer) wing beat ----------
+const frames = new Map();
+const queue = [];
+const fkey = (m, dmg, t) => `${m.type}|${m.temper}|${dmg}|${t}`;
+const flyer = (m) => !!MODELS[m.type]?.flying;
+const dmgOf = (m) => (m.balance > 0 ? damageLevel(m.balance, m.peak) : 1);
+const toCanvas = (buf) => {
+  const c = document.createElement('canvas');
+  c.width = buf.w; c.height = buf.h;
+  c.getContext('2d').putImageData(new ImageData(buf.data, buf.w, buf.h), 0, 0);
+  return c;
+};
+function want(m, dmg, front = false) {
+  for (const t of flyer(m) ? FLAP : [0.4]) {
+    const k = fkey(m, dmg, t);
+    if (frames.has(k) || queue.some((q) => q.k === k)) continue;
+    const job = { k, m: { type: m.type, temper: m.temper }, dmg, t };
+    if (front) queue.unshift(job); else queue.push(job);
+  }
+  pump();
+}
+let pumping = false;
+function pump() {
+  if (pumping) return;
+  pumping = true;
+  const step = () => {
+    const t0 = performance.now();
+    while (queue.length && performance.now() - t0 < 30) {
+      const q = queue.shift();
+      if (!frames.has(q.k)) frames.set(q.k, toCanvas(renderModel(q.m.type, q.m.temper, { w: SW, h: SH, framing: 'stage', t: q.t, damage: q.dmg })));
+    }
+    if (queue.length) setTimeout(step, 0);
+    else pumping = false;
+  };
+  setTimeout(step, 0);
+}
+/** The frame to draw: the right damage level if it's ready, else the nearest one that is. */
+function frameFor(m, time) {
+  const w = dmgOf(m);
+  for (const lvl of [w, 0.75, 0.5, 0.25, 0, 1].filter((l, i, a) => a.indexOf(l) === i)) {
+    if (flyer(m)) {
+      const all = FLAP.map((t) => frames.get(fkey(m, lvl, t)));
+      if (all.every(Boolean)) return all[Math.floor(time * 5.2) % all.length];
+      if (all[0] && lvl !== w) return all[0];
+    } else if (frames.has(fkey(m, lvl, 0.4))) return frames.get(fkey(m, lvl, 0.4));
+  }
+  return frames.get(fkey(m, w, flyer(m) ? FLAP[0] : 0.4)) || null;
+}
+const whiteCache = new WeakMap();
+function whiteOf(cv) {
+  if (whiteCache.has(cv)) return whiteCache.get(cv);
+  const c = document.createElement('canvas');
+  c.width = cv.width; c.height = cv.height;
+  const g = c.getContext('2d');
+  g.drawImage(cv, 0, 0);
+  g.globalCompositeOperation = 'source-atop';
+  g.fillStyle = '#fff';
+  g.fillRect(0, 0, c.width, c.height);
+  whiteCache.set(cv, c);
+  return c;
+}
+const sceneCache = new Map();
+const sceneOf = (type) => sceneCache.get(type) || (sceneCache.set(type, toCanvas(renderScene(type, SW, SH))), sceneCache.get(type));
+const portraitCache = new Map();
+function portraitOf(m) {
+  const k = `${m.type}|${m.temper}|${dmgOf(m)}`;
+  if (!portraitCache.has(k)) portraitCache.set(k, toCanvas(renderPortrait(m.type, m.temper, { size: 56, damage: dmgOf(m) })));
+  return portraitCache.get(k);
+}
+
+/** Bounding box, main colours and sample pixel positions of a rendered frame (for the attack's debris). */
+const infoCache = new WeakMap();
+function frameInfo(cv) {
+  if (infoCache.has(cv)) return infoCache.get(cv);
+  const a = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+  let x0 = SW, y0 = SH, x1 = 0, y1 = 0;
+  const counts = new Map(), points = [];
+  for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++) {
+    const o = (y * SW + x) * 4;
+    if (a[o + 3] < 200) continue;
+    x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+    if ((x + y) % 3 === 0) points.push([x, y]);
+    if (a[o] + a[o + 1] + a[o + 2] < 90) continue;
+    const k = `#${[a[o], a[o + 1], a[o + 2]].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+    counts.set(k, (counts.get(k) || 0) + 1);
+  }
+  const info = { box: { x0, y0, x1, y1 }, palette: [...counts].sort((p, q) => q[1] - p[1]).slice(0, 4).map((p) => p[0]), points };
+  infoCache.set(cv, info);
+  return info;
+}
+
+// ---------- ambient particles per habitat ----------
+const AMBIENT = { fireflies: ['#e8ff8a', '#a8e060'], embers: ['#ffb040', '#ff6a1a'], mist: ['#c8d0e8', '#9aa4c4'], snow: ['#ffffff', '#c8d4f0'] };
+function seedMotes(kind) {
+  B.motes = Array.from({ length: kind === 'mist' ? 26 : 18 }, () => ({ x: Math.random() * SW, y: Math.random() * SH * 0.9, p: Math.random() * 6.28, s: 0.3 + Math.random() * 0.7 }));
+}
+function drawMotes(g, kind, time) {
+  const cols = AMBIENT[kind];
+  if (!cols) return;
+  for (const q of B.motes) {
+    if (kind === 'fireflies') { q.x += Math.sin(time * 0.8 + q.p) * 0.15; q.y += Math.cos(time * 0.6 + q.p) * 0.1; if (Math.sin(time * 3 + q.p) < 0.2) continue; }
+    if (kind === 'embers') { q.y -= 0.25 * q.s; q.x += Math.sin(time + q.p) * 0.12; if (q.y < 0) { q.y = SH; q.x = Math.random() * SW; } }
+    if (kind === 'snow') { q.y += 0.2 * q.s; q.x += Math.sin(time * 0.7 + q.p) * 0.1; if (q.y > SH) { q.y = 0; q.x = Math.random() * SW; } }
+    if (kind === 'mist') { q.x += 0.08 * q.s; if (q.x > SW + 6) q.x = -6; q.y = SH * 0.5 + Math.sin(q.p) * 10; }
+    g.fillStyle = cols[(q.p * 10 | 0) % 2];
+    if (kind === 'mist') { g.globalAlpha = 0.18; g.fillRect(Math.round(q.x) - 4, Math.round(q.y), 9, 2); g.globalAlpha = 1; }
+    else g.fillRect(Math.round(q.x), Math.round(q.y), 1, 1);
+  }
+}
+
+// ---------- drawing ----------
+const FX_B = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map((v) => (v + 0.5) / 16);
+let tmp = null;
+function drawMonster(g, m, cv, x, turn, time, o = {}) {
+  if (!cv) return;
+  if (o.xf) {
+    const xf = o.xf;
+    if (xf.dissolve >= 1) return;
+    if (!tmp) { tmp = document.createElement('canvas'); tmp.width = SW; tmp.height = SH; }
+    const tg = tmp.getContext('2d');
+    const target = xf.dissolve > 0 ? tg : g;
+    if (target === tg) { tg.clearRect(0, 0, SW, SH); tg.imageSmoothingEnabled = false; }
+    const px0 = SW / 2 + x, py0 = xf.pivotY;
+    target.save();
+    target.translate(Math.round(px0 + xf.dx), Math.round(py0 + xf.dy));
+    target.rotate(xf.rot);
+    target.scale(xf.sx, xf.sy);
+    target.translate(-px0, -py0);
+    drawMonster(target, m, cv, x, turn, time, { white: xf.flash });
+    target.restore();
+    if (target === tg) {
+      // dissolve from the top down, the edge glowing gold
+      const img = tg.getImageData(0, 0, SW, SH), a = img.data, b = o.box, hgt = Math.max(1, b.y1 - b.y0);
+      for (let y = 0; y < SH; y++) for (let xx = 0; xx < SW; xx++) {
+        const k = (y * SW + xx) * 4;
+        if (!a[k + 3]) continue;
+        const v = 0.5 * FX_B[((y >> 1) & 3) * 4 + ((xx >> 1) & 3)] + 0.5 * Math.min(1, Math.max(0, (y - b.y0) / hgt));
+        const cut = xf.dissolve * 1.1;
+        if (v < cut) a[k + 3] = 0;
+        else if (v < cut + 0.07) { a[k] = 255; a[k + 1] = 214; a[k + 2] = 80; }
+      }
+      tg.putImageData(img, 0, 0);
+      g.drawImage(tmp, 0, 0);
+    }
+    return;
+  }
+  const sx = 1 - 0.42 * Math.min(1, turn);
+  const breathe = m.type === 'slime' ? Math.sin(time * 3) * 0.05 : 0;
+  const bob = flyer(m) || m.type === 'castle' ? 0 : Math.round(Math.sin(time * 2.2) * 0.6);
+  const w = Math.round(SW * sx * (1 - breathe * 0.6)), h = Math.round(SH * (1 + breathe));
+  const gy = GY();
+  g.drawImage(o.white ? whiteOf(cv) : cv, Math.round(x + (SW - w) / 2), Math.round(gy - gy * (h / SH)) + bob, w, h);
+}
+
+const shown = () => (B.atk ? B.atk.m : B.list[B.cur]);
+
+function compose(g, offset, time) {
+  const m = shown();
+  if (!m) return;
+  g.imageSmoothingEnabled = false;
+  g.clearRect(0, 0, SW, SH);
+  const dir = offset < 0 ? 1 : -1;
+  const n = B.list.length > 1 ? B.list[(B.cur + dir + B.list.length) % B.list.length] : null;
+  const shift = offset * SW;
+  g.drawImage(sceneOf(m.type), Math.round(shift * 0.5), 0);
+  if (offset && n) g.drawImage(sceneOf(n.type), Math.round(shift * 0.5 + dir * SW), 0);
+  drawMotes(g, HABITATS[m.type]?.particles, time);
+  const A = B.atk?.A;
+  if (A) {
+    const dim = A.dim();
+    if (dim > 0.01) { g.globalAlpha = dim; g.fillStyle = '#05030c'; g.fillRect(0, 0, SW, SH); g.globalAlpha = 1; }
+    A.drawBack(g);
+    drawMonster(g, m, B.atk.frame, 0, 0, time, { xf: A.monster(), box: B.atk.info.box });
+    A.drawFront(g);
+    return;
+  }
+  const a = Math.abs(offset);
+  drawMonster(g, m, frameFor(m, time), shift * 1.1, a * 1.6, time);
+  if (offset && n) drawMonster(g, n, frameFor(n, time), dir * SW * 1.1 * Math.pow(1 - a, 1.6), (1 - a) * 1.4, time);
+}
+
+// ---------- the HUD ----------
+function hudHtml(m) {
+  const fmt = B.fmt;
+  const pct = Math.max(0, Math.min(100, (Math.max(0, m.balance) / m.peak) * 100));
+  return `
+    <canvas width="56" height="56" aria-hidden="true"></canvas>
+    <div class="grow">
+      <div class="b-name">${esc(m.name)}${m.boss ? '<span class="badge boss">Boss</span>' : ''}</div>
+      <small>${esc(m.temperName)} ${esc(m.speciesName)} · ${m.rate}% APR</small>
+      <div class="b-purse"><span class="b-coin" aria-hidden="true">$</span><div class="b-bar" role="meter" aria-label="Still owed" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pct)}" aria-valuetext="${fmt(Math.max(0, m.balance))} owed"><u style="width:${pct}%"></u><i style="width:${pct}%"></i>${m.boss ? [75, 50, 25].map((p) => `<span class="ph" style="left:${p}%"></span>`).join('') : ''}<b>${fmt(Math.max(0, m.balance))} owed</b></div></div>
+      <div class="b-paid"><span>Paid <em>${fmt(m.peak - Math.max(0, m.balance))}</em> of ${fmt(m.peak)}</span><span>${Math.round(100 - pct)}%</span></div>
+      ${m.warn ? `<small class="b-warn ${m.warnBad ? 'bad' : ''}">${esc(m.warn)}</small>` : ''}
+    </div>`;
+}
+function renderHud() {
+  const e = B.els;
+  const m = shown();
+  if (!e || !m) return;
+  e.hud.innerHTML = hudHtml(m);
+  e.hud.querySelector('canvas').getContext('2d').drawImage(portraitOf(m), 0, 0);
+  e.dots.innerHTML = B.list.length > 1 ? B.list.map((_, k) => `<i class="${k === B.cur ? 'on' : ''}"></i>`).join('') : '';
+  e.stage.setAttribute('aria-label', `${m.name}: ${m.speciesName}, ${B.fmt(Math.max(0, m.balance))} owed`);
+}
+function setBar(m, balance, drainSec, ghostDelay) {
+  const bar = B.els?.hud.querySelector('.b-bar');
+  if (!bar) return;
+  const pct = Math.max(0, Math.min(100, (Math.max(0, balance) / m.peak) * 100));
+  const i = bar.querySelector('i'), u = bar.querySelector('u');
+  i.style.transitionDuration = `${drainSec}s`;
+  i.style.width = `${pct}%`;
+  setTimeout(() => { u.style.transitionDuration = `${drainSec + 0.2}s`; u.style.width = `${pct}%`; }, ghostDelay);
+  bar.querySelector('b').textContent = `${B.fmt(Math.max(0, balance))} owed`;
+  bar.setAttribute('aria-valuenow', Math.round(pct));
+  bar.setAttribute('aria-valuetext', `${B.fmt(Math.max(0, balance))} owed`);
+  const paid = B.els.hud.querySelector('.b-paid');
+  if (paid) paid.innerHTML = `<span>Paid <em>${B.fmt(m.peak - Math.max(0, balance))}</em> of ${B.fmt(m.peak)}</span><span>${Math.round(100 - pct)}%</span>`;
+}
+
+// ---------- markup and mounting ----------
+export function battleMarkup() {
+  return `
+    <section class="b-stage-wrap" id="b-stage">
+      <canvas class="b-stage" width="${SW}" height="${SH}" role="img" aria-label="Battle"></canvas>
+      <div class="b-summon">Summoning…</div>
+      <div class="b-hud"></div>
+      <div class="b-dots" aria-hidden="true"></div>
+      <button class="b-arrow l" type="button" aria-label="Previous debt">‹</button>
+      <button class="b-arrow r" type="button" aria-label="Next debt">›</button>
+      <div class="b-skip" hidden>Tap to speed up</div>
+      <div class="b-actions">
+        <button class="btn primary" type="button" data-b="pay">Pay</button>
+        <button class="btn" type="button" data-b="details">Details</button>
+      </div>
+    </section>`;
+}
+
+/**
+ * Bring the stage to life after the app renders its markup.
+ * fighters: [{ id, name, type, temper, temperName, speciesName, rate, balance, peak, boss, warn, warnBad }]
+ * hooks: { onPay(id), onDetails(id) }
+ */
+export function mountBattle(root, fighters, fmt, hooks) {
+  if (!root) return;
+  B.list = fighters;
+  B.fmt = fmt;
+  B.hooks = hooks;
+  const idx = B.list.findIndex((m) => m.id === B.curId);
+  B.cur = idx >= 0 ? idx : Math.min(B.cur, Math.max(0, B.list.length - 1));
+  B.curId = B.list[B.cur]?.id ?? null;
+  B.els = {
+    root,
+    stage: root.querySelector('.b-stage'),
+    hud: root.querySelector('.b-hud'),
+    dots: root.querySelector('.b-dots'),
+    skip: root.querySelector('.b-skip'),
+    summon: root.querySelector('.b-summon'),
+  };
+  B.els.g = B.els.stage.getContext('2d');
+  root.classList.toggle('single', B.list.length < 2);
+  root.querySelector('.b-arrow.l').onclick = () => turn(-1);
+  root.querySelector('.b-arrow.r').onclick = () => turn(1);
+  root.querySelector('[data-b=pay]').onclick = () => !B.atk && shown() && B.hooks.onPay?.(shown().id);
+  root.querySelector('[data-b=details]').onclick = () => !B.atk && shown() && B.hooks.onDetails?.(shown().id);
+  const stage = B.els.stage;
+  stage.addEventListener('pointerdown', (e) => {
+    if (B.atk) { B.atk.A.skip(); return; }
+    if (B.slide || B.list.length < 2) return;
+    B.drag = { x0: e.clientX, y0: e.clientY, offset: 0 };
+    stage.setPointerCapture?.(e.pointerId);
+  });
+  stage.addEventListener('pointermove', (e) => {
+    if (!B.drag) return;
+    B.drag.offset = Math.max(-1, Math.min(1, (e.clientX - B.drag.x0) / stage.getBoundingClientRect().width));
+  });
+  const end = () => {
+    if (!B.drag) return;
+    const off = B.drag.offset;
+    if (Math.abs(off) > 0.25) turn(off < 0 ? 1 : -1);
+    else B.slide = { from: off, to: 0, t0: performance.now(), dur: 220, done: () => {} };
+    B.drag = null;
+  };
+  stage.addEventListener('pointerup', end);
+  stage.addEventListener('pointercancel', end);
+  setBusy(!!B.atk);
+  if (shown()) {
+    seedMotes(HABITATS[shown().type]?.particles);
+    renderHud();
+    // this monster first, then its neighbours, then everyone else
+    want(shown(), dmgOf(shown()), true);
+    for (const k of [1, -1, 2, -2, 3, -3]) { const n = B.list[(B.cur + k + B.list.length * 3) % B.list.length]; if (n) want(n, dmgOf(n)); }
+    if (B.atk) setBar(B.atk.m, B.atk.shownBalance, 0, 0);
+  }
+  if (!B.running) { B.running = true; B.lastNow = performance.now(); requestAnimationFrame(loop); }
+}
+
+function turn(dir) {
+  if (B.slide || B.atk || B.list.length < 2) return;
+  const from = B.drag ? B.drag.offset : 0;
+  B.slide = { from, to: dir > 0 ? -1 : 1, t0: performance.now(), dur: 380 * (1 - Math.abs(from)) + 140, done: () => {
+    B.cur = (B.cur + dir + B.list.length) % B.list.length;
+    B.curId = B.list[B.cur].id;
+    seedMotes(HABITATS[shown().type]?.particles);
+    renderHud();
+    for (const k of [1, -1]) { const n = B.list[(B.cur + k + B.list.length) % B.list.length]; want(n, dmgOf(n)); }
+  } };
+}
+
+/** Arrow keys turn to the next/previous debt while the Battle tab is showing. */
+export function battleKey(e) {
+  if (!B.els || !document.body.contains(B.els.stage) || document.querySelector('dialog[open]')) return;
+  if (e.target.closest?.('input, select, textarea')) return;
+  if (e.key === 'ArrowRight') turn(1);
+  if (e.key === 'ArrowLeft') turn(-1);
+}
+
+function loop(now) {
+  const e = B.els;
+  if (!e || !document.body.contains(e.stage)) { B.running = false; return; }
+  const time = now / 1000;
+  let offset = B.drag ? B.drag.offset : 0;
+  if (B.slide) {
+    const k = Math.min(1, (now - B.slide.t0) / B.slide.dur);
+    offset = B.slide.from + (B.slide.to - B.slide.from) * (1 - Math.pow(1 - k, 3));
+    if (k >= 1) { const done = B.slide.done; B.slide = null; offset = 0; done(); }
+  }
+  if (B.atk) runAttack(now);
+  B.lastNow = now;
+  compose(e.g, offset, time);
+  if (e.summon && shown() && frameFor(shown(), time)) { e.summon.remove(); e.summon = null; }
+  requestAnimationFrame(loop);
+}
+
+// ---------- attacking ----------
+function setBusy(on) {
+  if (!B.els) return;
+  B.els.root.classList.toggle('busy', on);
+  B.els.skip.hidden = !on;
+  for (const b of B.els.root.querySelectorAll('.b-arrow, .b-actions .btn')) b.disabled = on;
+}
+
+/** True while an attack is playing. */
+export const battleBusy = () => !!B.atk;
+
+/**
+ * Play an attack on the stage. `m` is the monster as it was before the payment (a fighter object, its
+ * balance the old balance); `cents` the payment. onDone runs when the animation ends.
+ */
+export function playAttack(m, cents, onDone) {
+  if (!B.els || !document.body.contains(B.els.stage)) return void onDone?.();
+  const tr = attackTier(cents, m.peak, m.balance);
+  const after = m.balance - cents;
+  want(m, dmgOf(m), true);
+  want({ ...m, balance: after }, damageLevel(Math.max(0, after), m.peak), true);
+  const t0 = performance.now();
+  const start = () => {
+    const frame = frameFor(m, performance.now() / 1000);
+    if (!frame) {
+      if (performance.now() - t0 > 4000) return void onDone?.();
+      return void setTimeout(start, 60);
+    }
+    const info = frameInfo(frame);
+    const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const A = createAttack({ tier: tr.index, kill: tr.kill, type: m.type, box: info.box, palette: info.palette, points: info.points,
+      W: SW, H: SH, groundY: GY(), flying: flyer(m), reduced, seed: (Math.random() * 1e9) | 0 });
+    B.atk = { A, m: { ...m }, cents, tr, after, info, frame, onDone, shownBalance: m.balance };
+    B.drag = null;
+    B.slide = null;
+    seedMotes(HABITATS[m.type]?.particles);
+    renderHud();
+    setBusy(true);
+    if (tr.index >= 3) B.els.hud.classList.add('away'); // clear the sky for the big ones
+  };
+  start();
+}
+
+function popText(cls, html, ms) {
+  const el = document.createElement('div');
+  el.className = cls;
+  el.innerHTML = html;
+  B.els.root.appendChild(el);
+  setTimeout(() => el.remove(), ms);
+  return el;
+}
+
+function runAttack(now) {
+  const at = B.atk;
+  const { A, tr, m } = at;
+  const cues = A.step((now - B.lastNow) / 1000);
+  // the monster keeps animating from the right frame while the stage shows the new wounds after the hit
+  if (at.hit) at.frame = frameFor({ ...m, balance: Math.max(0, at.after) }, now / 1000) || at.frame;
+  else if (flyer(m)) at.frame = frameFor(m, now / 1000) || at.frame;
+  for (const c of cues) {
+    if (c.cue === 'banner') popText(`b-banner s${c.size}`, esc(c.text), 1500);
+    if (c.cue === 'buzz') { try { navigator.vibrate?.(c.ms); } catch { /* not supported */ } }
+    if (c.cue === 'hit') {
+      at.hit = true;
+      B.els.hud.classList.remove('away');
+      const share = `${(tr.share * 100).toFixed(tr.share < 0.1 ? 1 : 0)}% of the debt`;
+      const long = B.fmt(at.cents).length > 9;
+      const el = popText(`b-dmg s${tr.stars}${long ? ' long' : ''}`, `<span>−${esc(B.fmt(0))}</span><small>${share}</small>`, 2300);
+      const span = el.querySelector('span'), t0 = performance.now(), dur = 300 + tr.index * 180, total = at.cents;
+      const count = () => {
+        const k = Math.min(1, (performance.now() - t0) / dur);
+        span.textContent = `−${B.fmt(k < 1 ? Math.round((total * (1 - Math.pow(1 - k, 3))) / 100) * 100 : total)}`;
+        if (k < 1) requestAnimationFrame(count);
+      };
+      requestAnimationFrame(count);
+      at.shownBalance = Math.max(0, at.after);
+      setBar(m, at.shownBalance, 0.3 + tr.index * 0.25, 450 + tr.index * 150);
+      if (m.boss && at.after > 0) {
+        const before = Math.floor((m.balance / m.peak) * 4), after = Math.floor((at.after / m.peak) * 4);
+        if (after < before) setTimeout(() => B.atk && popText('b-banner s3', `Phase broken!<small>${4 - after} of 4 down</small>`, 1500), 1100 + tr.index * 200);
+      }
+    }
+    if (c.cue === 'defeated') popText('b-banner win', `Defeated!<small>${esc(m.name)} is paid off</small>`, 3000);
+  }
+  if (A.done) {
+    const done = at.onDone;
+    B.atk = null;
+    B.els.hud.classList.remove('away');
+    setBusy(false);
+    done?.();
+  }
+}
+
+/** A short reward note that floats up on the stage (e.g. "+45 XP"). */
+export function battlePop(text) {
+  if (!B.els || !document.body.contains(B.els.stage)) return;
+  popText('b-xp', esc(text), 1800);
+}
+
+/** The attack a payment would make, for the payment form: stars only (names show during the attack). */
+export function attackPower(cents, peak, balance) {
+  const tr = attackTier(cents, peak, balance);
+  return { stars: tr.stars, kill: tr.kill, share: tr.share };
+}

@@ -25,7 +25,8 @@ import { uid, emptyState, normalizeState } from './state.js';
 import { loadState, saveState, requestPersistence, downloadBackup, readBackup, hadLoadProblem } from './storage.js';
 import { drawSprite } from './sprites.js';
 import { MODELS, renderModel, renderPortrait, damageLevel } from './models.js';
-import { esc, toast, openSheet, openForm, askConfirm } from './ui.js';
+import { esc, toast, holdToasts, openSheet, openForm, askConfirm } from './ui.js';
+import { battleMarkup, mountBattle, playAttack, battleKey, attackPower, battlePop } from './battle.js';
 import { lineChart, attachCharts, SERIES_COLORS } from './chart.js';
 import { ACCOUNT_TYPES, accountEvents, accountBalances, totalsByType, accountActivity } from './accounts.js';
 import { moneyTimeline } from './projection.js';
@@ -396,14 +397,17 @@ function planView() {
     <section class="card">
       <h2>Your stats</h2>
       <div class="stats">
-        <div><small>Damage dealt</small><b>${fmt(paidAll)}</b></div>
-        <div><small>Interest healed</small><b>${fmt(interestAll)}</b></div>
+        <div><small>Paid so far</small><b>${fmt(paidAll)}</b></div>
+        <div><small>Interest added</small><b>${fmt(interestAll)}</b></div>
         <div><small>Defeated</small><b>${ms.filter((m) => !m.alive).length} of ${ms.length}</b></div>
         <div><small>Level</small><b>${lv.level}</b></div>
         <div><small>Streak</small><b>${((n) => `${n} day${n === 1 ? '' : 's'}`)(streak(state.player.days, todayISO()))}</b></div>
         <div><small>Days logged</small><b>${state.player.days.length}</b></div>
       </div>
     </section>
+    ${heroCard()}
+    ${questCard()}
+    ${achievementsCard()}
     <section class="card">
       <h2>Last 6 months</h2>
       <div class="legend"><span><i class="sw-income"></i>Income</span><span><i class="sw-spent"></i>Spent</span></div>
@@ -709,7 +713,7 @@ function monsterCard(m) {
         <div class="m-name">${esc(m.name)}</div>
         <small>${m.alive ? `${m.temper.name} ${m.species.name}` : 'Defeated'} · ${m.rate}% APR</small>
         ${badges ? `<div class="badges">${badges}</div>` : ''}
-        ${m.alive ? hpBar(m.hpPct, fmt(m.balance), m.boss) : ''}
+        ${m.alive ? hpBar(m.hpPct, `${fmt(m.balance)} owed`, m.boss) : ''}
         ${m.missed ? `<small class="bad">Enraged! The ${dayLabel(m.missed.due)} payment was missed. Pay it to calm it down.</small>`
           : m.regen ? '<small class="bad">Regenerating! The minimum doesn\'t cover interest</small>' : ''}
       </div>
@@ -769,20 +773,79 @@ function openHero() {
   paintSprites(sheet.el);
 }
 
+/** A monster as the battle stage shows it. */
+function fighterOf(m) {
+  const warn = m.missed ? [`Missed the ${dayLabel(m.missed.due)} payment! Pay it to calm it down`, true]
+    : m.regen ? ["Growing: the minimum doesn't cover its interest", true]
+    : m.paused ? [`Payments paused until ${dayLabel(m.pauseUntil)}`, false]
+    : m.promo ? [`${m.apr}% until ${dayLabel(m.promo.ends)}, then ${m.promo.after}%`, false] : [null, false];
+  return {
+    id: m.id, name: m.name, type: m.species.key, temper: m.temper.key, temperName: m.temper.name, speciesName: m.species.name,
+    rate: m.rate, balance: m.balance, peak: m.maxHp, boss: m.boss, warn: warn[0], warnBad: warn[1],
+  };
+}
+const fightOrder = (a, b) => (b.boss - a.boss) || b.balance - a.balance;
+const battleFighters = () => monsters().filter((m) => m.alive && m.include).sort(fightOrder).map(fighterOf);
+
+/** Stars for how hard a payment hits (the attack's name only shows while it plays). */
+function powerLabel(cents, m) {
+  const p = attackPower(cents, m.maxHp, m.balance);
+  if (p.kill) return '<span class="power-stars">✦</span> Pays it off';
+  return `<span class="power-stars" aria-label="Attack power ${p.stars} of 5">${'★'.repeat(p.stars)}<span>${'★'.repeat(5 - p.stars)}</span></span> ${(p.share * 100).toFixed(p.share < 0.1 ? 1 : 0)}% of the debt`;
+}
+
+/** Pay: the minimum in one tap, or a custom amount. */
+function payMonster(id) {
+  const m = monsters().find((x) => x.id === id);
+  if (!m || !m.alive) return;
+  const min = Math.min(m.minPayment || 0, m.balance);
+  const acct = withAccount('Paid from', ['cash', 'savings'])[0];
+  const acctName = acct?.value ? state.accounts.find((a) => a.id === acct.value)?.name : null;
+  openSheet(`
+    <h2>Pay ${esc(m.name)}</h2>
+    <p class="hint">${fmt(m.balance)} owed${m.paused ? ` · payments paused until ${dayLabel(m.pauseUntil)}` : ''}</p>
+    <div class="pay-choices">
+      <button class="pay-choice primary" data-action="min" ${min ? '' : 'disabled'}>
+        <span class="grow"><b>Minimum payment</b><small>${min ? `${powerLabel(min, m)}${acctName ? ` · from ${esc(acctName)}` : ''}` : 'No minimum set yet. Add one in Details.'}</small></span>
+        <span class="amt">${min ? fmt(min) : ''}</span>
+      </button>
+      <button class="pay-choice" data-action="custom">
+        <span class="grow"><b>Custom amount</b><small>Pay more, hit harder</small></span>
+        <span class="amt" aria-hidden="true">›</span>
+      </button>
+    </div>`, {
+    onAction: (action, _el, { close }) => {
+      close();
+      if (action === 'min') {
+        const v = { amount: min, accountId: acct?.value || null, date: todayISO(), note: '' };
+        const res = saveDebtEntry('payment', m, v);
+        if (res.error) return toast(res.error, 'bad');
+        afterDebtEntry('payment', m, v.amount, res, true);
+      }
+      if (action === 'custom') logDebtEntry('payment', m.id, true);
+    },
+  });
+}
+
+/** The Battle tab is only the battle: the stage, or a prompt to add a first debt. */
 function battleView() {
+  const ms = monsters();
+  const active = ms.filter((m) => m.alive && m.include);
+  const dead = ms.filter((m) => !m.alive);
+  return `
+    <h1 class="sr-only">Battle</h1>
+    ${active.length ? battleMarkup() : `
+      <section class="card empty-card battle-empty">
+        <p>${dead.length ? 'Every monster is defeated. Well fought!' : 'No monsters yet. Each debt you add appears here as a monster.'}</p>
+        <div class="row-buttons"><button class="btn primary" data-action="add-debt">Add a debt</button>
+        ${state.settings.setupDone ? '' : '<button class="btn" data-action="goto" data-tab="setup">Set up your account</button>'}</div>
+      </section>`}`;
+}
+
+/** Your hero: level, streak and outfit (on the Planning tab with the stats). */
+function heroCard() {
   const lv = levelInfo(state.player.xp);
   const st = streak(state.player.days, todayISO());
-  const ms = monsters();
-  const active = ms.filter((m) => m.alive && m.include).sort((a, b) => (b.boss - a.boss) || b.balance - a.balance);
-  const benched = ms.filter((m) => m.alive && !m.include);
-  const dead = ms.filter((m) => !m.alive);
-  const totalHp = active.reduce((s, m) => s + m.balance, 0);
-  const iOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
-  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
-  const month = state.settings.setupDone ? summary(ymOf(todayISO())) : null;
-  // Only real budget lines count; unplanned spending has no limit to go over.
-  const overLines = month ? month.categories.filter((c) => c.over).map((c) => c.name) : [];
-
   return `
     <button class="card hero" data-action="hero">
       ${spriteCanvas('hero', state.player.skin, 4)}
@@ -792,25 +855,16 @@ function battleView() {
         <div class="xp" role="meter" aria-label="Experience" aria-valuenow="${lv.into}" aria-valuemax="${lv.span}"><div style="width:${(lv.into / lv.span) * 100}%"></div></div>
         <small>${lv.toNext} XP to level ${lv.level + 1} · tap to change outfit</small>
       </div>
-    </button>
-    ${!standalone && iOS && state.settings.setupDone ? `<section class="card tip">Install: tap <b>Share</b> then <b>Add to Home Screen</b>.</section>` : ''}
-    ${!standalone && ui.installPrompt ? `<section class="card tip">Install Coin Quest on this device. <button class="btn primary" data-action="install">Install</button></section>` : ''}
-    ${overLines.length && active.length ? `<section class="card danger feed"><b>The monsters are feeding!</b><p>You went over budget on ${overLines.map(esc).join(', ')} this month. Money spent there can't fight debt.</p></section>` : ''}
+    </button>`;
+}
 
-    <div class="battle-head">
-      <h1>Battleground</h1>
-      ${active.length ? `<span>${fmt(totalHp)} HP left</span>` : ''}
-    </div>
-    ${active.length ? active.map(monsterCard).join('') : `
-      <section class="card empty-card">
-        <p>${dead.length ? 'Every monster is defeated. Well fought!' : 'No monsters yet. Each debt you add appears here as a monster.'}</p>
-        <div class="row-buttons"><button class="btn primary" data-action="add-debt">Add a debt</button>
-        ${state.settings.setupDone ? '' : '<button class="btn" data-action="goto" data-tab="setup">Set up your account</button>'}</div>
-      </section>`}
-    ${benched.length ? `<h2 class="section-h">Benched</h2><p class="hint">Kept off the battlefield and out of the plan.</p>${benched.map(monsterCard).join('')}` : ''}
-    ${dead.length ? `<h2 class="section-h">Trophies</h2>${dead.map(monsterCard).join('')}` : ''}
-    ${questCard()}
-    ${achievementsCard()}`;
+/** "Add to Home Screen" help, on the Settings tab until the app is installed. */
+function installTip() {
+  const iOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+  if (standalone) return '';
+  if (ui.installPrompt) return `<section class="card tip">Install Coin Quest on this device. <button class="btn primary" data-action="install">Install</button></section>`;
+  return iOS ? `<section class="card tip">Install: tap <b>Share</b> then <b>Add to Home Screen</b>.</section>` : '';
 }
 
 // ---------- money you have (current situation) ----------
@@ -1186,6 +1240,7 @@ function setupView() {
   const goals = Object.entries(GOALS).filter(([k]) => state.goals[k]);
   return `
     ${header('Settings')}
+    ${installTip()}
     <section class="card ${done ? '' : 'tip'}">
       <h2>${done ? 'Your account' : 'Get started'}</h2>
       ${done
@@ -1266,6 +1321,7 @@ function render() {
   const r = route();
   const scrollY = r === lastRoute ? window.scrollY : 0;
   view.innerHTML = VIEWS[r]();
+  view.classList.toggle('battle-only', r === 'battle');
   for (const a of document.querySelectorAll('.tabs a')) {
     const on = a.dataset.tab === r;
     a.classList.toggle('on', on);
@@ -1274,6 +1330,7 @@ function render() {
   }
   paintSprites(view);
   attachCharts(view);
+  if (r === 'battle') mountBattle(document.getElementById('b-stage'), battleFighters(), fmt, { onPay: payMonster, onDetails: (id) => openDebt(id) });
   window.scrollTo(0, scrollY);
   lastRoute = r;
 }
@@ -1389,8 +1446,8 @@ function logDebtEntry(kind, debtId = null, fromBattle = false, prefill = {}, onD
   const options = liveDebtOptions();
   if (!fixed && !options.length) return toast('Add a debt first.');
   const first = fixed || monsters().find((m) => m.id === options[0].value);
-  openForm({
-    title: isAttack ? (fixed ? `Attack ${fixed.name}` : 'Log a debt payment') : (fixed ? `New charge on ${fixed.name}` : 'Log a new charge'),
+  const sheet = openForm({
+    title: isAttack ? (fixed ? `Pay ${fixed.name}` : 'Log a debt payment') : (fixed ? `New charge on ${fixed.name}` : 'Log a new charge'),
     intro: isAttack ? 'A payment you made. Every coin is damage.' : 'New spending or fees on a debt. It heals the monster.',
     fields: [
       ...(fixed ? [] : [{ name: 'debtId', label: 'Debt', type: 'select', options, value: options[0].value }]),
@@ -1402,37 +1459,76 @@ function logDebtEntry(kind, debtId = null, fromBattle = false, prefill = {}, onD
     submitLabel: isAttack ? 'Strike!' : 'Add charge',
     onSubmit: (v) => {
       const m = monsters().find((x) => x.id === (fixed ? fixed.id : v.debtId));
-      if (isAttack && v.amount > m.balance) return `That's more than what's owed (${fmt(m.balance)}).`;
-      if (v.date > todayISO()) return 'Pick today or an earlier date.';
-      let killed = false;
-      commit((s) => {
-        s.ledger.push({ id: uid(), debtId: m.id, kind, amount: isAttack ? -v.amount : v.amount, date: v.date, note: v.note || '', auto: false, accountId: isAttack ? v.accountId || null : null });
-        markActive();
-        onDone?.(s);
-        if (isAttack) {
-          gainXp(attackXp(v.amount));
-          const d = s.debts.find((x) => x.id === m.id);
-          if (m.boss) {
-            const crossed = bossPhasesCrossed(m.maxHp, m.balance, m.balance - v.amount, d.bossPhases);
-            if (crossed.length && m.balance - v.amount > 0) {
-              d.bossPhases.push(...crossed);
-              gainXp(BOSS_PHASE_XP * crossed.length);
-              setTimeout(() => toast(`Boss staggered! ${m.name} is below ${Math.min(...crossed)}% HP. +${BOSS_PHASE_XP * crossed.length} XP`, 'good'), 400);
-            }
-          }
-          if (m.balance - v.amount <= 0 && !d.killRewarded) {
-            d.killRewarded = true;
-            gainXp(XP.kill[m.species.key] || 100);
-            killed = true;
-          }
-        }
-      });
-      if (killed) toast(`VICTORY! ${m.name} is defeated! +${XP.kill[m.species.key] || 100} XP`, 'good');
-      else if (isAttack) toast(`Hit ${m.name} for ${fmt(v.amount)}! +${attackXp(v.amount)} XP`, 'good');
-      else toast(`${m.name} healed ${fmt(v.amount)}.`, 'bad');
-      if (fromBattle && !killed) openDebt(m.id, isAttack ? v.amount : -v.amount);
+      const res = saveDebtEntry(kind, m, v, onDone);
+      if (res.error) return res.error;
+      afterDebtEntry(kind, m, v.amount, res, fromBattle);
     },
   });
+  if (isAttack) {
+    // live preview of how hard the payment hits
+    const input = sheet.el.querySelector('input[name=amount]');
+    const prev = document.createElement('p');
+    prev.className = 'power';
+    input.closest('.field').appendChild(prev);
+    const update = () => {
+      const mm = fixed || monsters().find((x) => x.id === sheet.el.querySelector('[name=debtId]')?.value);
+      const c = parseMoney(input.value.trim());
+      prev.innerHTML = mm && c > 0 ? `Attack power ${powerLabel(Math.min(c, mm.balance), mm)}` : '';
+    };
+    input.addEventListener('input', update);
+    sheet.el.querySelector('[name=debtId]')?.addEventListener('change', update);
+    update();
+  }
+}
+
+/** Save a payment (attack) or charge on monster m. Returns { error } or { killed, xp }. */
+function saveDebtEntry(kind, m, v, onDone = null) {
+  const isAttack = kind === 'payment';
+  if (isAttack && v.amount > m.balance) return { error: `That's more than what's owed (${fmt(m.balance)}).` };
+  if (v.date > todayISO()) return { error: 'Pick today or an earlier date.' };
+  let killed = false;
+  commit((s) => {
+    s.ledger.push({ id: uid(), debtId: m.id, kind, amount: isAttack ? -v.amount : v.amount, date: v.date, note: v.note || '', auto: false, accountId: isAttack ? v.accountId || null : null });
+    markActive();
+    onDone?.(s);
+    if (isAttack) {
+      gainXp(attackXp(v.amount));
+      const d = s.debts.find((x) => x.id === m.id);
+      if (m.boss) {
+        const crossed = bossPhasesCrossed(m.maxHp, m.balance, m.balance - v.amount, d.bossPhases);
+        if (crossed.length && m.balance - v.amount > 0) {
+          d.bossPhases.push(...crossed);
+          gainXp(BOSS_PHASE_XP * crossed.length);
+          setTimeout(() => toast(`Boss staggered! ${m.name} is below ${Math.min(...crossed)}% of what was owed. +${BOSS_PHASE_XP * crossed.length} XP`, 'good'), 400);
+        }
+      }
+      if (m.balance - v.amount <= 0 && !d.killRewarded) {
+        d.killRewarded = true;
+        gainXp(XP.kill[m.species.key] || 100);
+        killed = true;
+      }
+    }
+  });
+  return { killed };
+}
+
+/** After saving: on the Battle tab a payment plays its attack on the stage; elsewhere a toast (and the hit on the debt's sheet). */
+function afterDebtEntry(kind, m, amount, { killed }, fromBattle) {
+  const isAttack = kind === 'payment';
+  const msg = killed ? `VICTORY! ${m.name} is defeated! +${XP.kill[m.species.key] || 100} XP`
+    : isAttack ? `Hit ${m.name} for ${fmt(amount)}! +${attackXp(amount)} XP` : `${m.name} healed ${fmt(amount)}.`;
+  if (isAttack && fromBattle && route() === 'battle' && document.getElementById('b-stage') && m.include) {
+    holdToasts(true);
+    const xp = attackXp(amount) + (killed ? XP.kill[m.species.key] || 100 : 0);
+    playAttack(fighterOf(m), amount, () => {
+      render();
+      battlePop(`+${xp} XP`);
+      holdToasts(false);
+    });
+    return;
+  }
+  toast(msg, isAttack ? 'good' : 'bad');
+  if (fromBattle && !killed) openDebt(m.id, isAttack ? amount : -amount);
 }
 
 function scoutDebt(m) {
@@ -1467,22 +1563,23 @@ function openDebt(id, hit = 0) {
     </div>
     <h2>${esc(m.name)}</h2>
     <p class="hint">${m.alive ? `${m.temper.name} ${m.species.name}` : 'Defeated'} · ${typeLabel(m.type)}${m.include ? '' : ' · Benched'}</p>
-    ${hpBar(m.hpPct, `${fmt(Math.max(0, m.balance))} HP`)}
+    ${hpBar(m.hpPct, `${fmt(Math.max(0, m.balance))} owed`, m.boss && m.alive)}
+    <p class="hint paid-line">Paid ${fmt(Math.max(0, m.maxHp - Math.max(0, m.balance)))} of ${fmt(m.maxHp)}</p>
     ${m.missed ? `<p class="bad">Missed payment: less than the minimum was paid for the ${dayLabel(m.missed.due)} due date. Late fees and a higher rate may follow.</p>` : ''}
     ${m.regen ? `<p class="bad">It heals ${fmt(m.monthly)} a month but the minimum only hits for ${fmt(m.minPayment)}. Pay more than the minimum to make progress.</p>` : ''}
     ${m.promo ? `<p class="hint">Promo rate: ${m.apr}% until ${dayLabel(m.promo.ends)}, then ${m.promo.after}%.</p>` : ''}
     ${m.paused ? `<p class="hint">Payments paused until ${dayLabel(m.pauseUntil)}. Interest ${m.pauseAccrues ? `builds up${m.capitalize ? ' and is added to the balance when the pause ends' : ''}` : "doesn't build up"}.</p>` : ''}
-    ${m.boss && m.alive ? `<p class="hint">Boss: bonus XP when it drops below 75%, 50% and 25% HP.</p>` : ''}
+    ${m.boss && m.alive ? `<p class="hint">Boss: bonus XP when it drops below 75%, 50% and 25% of the most it was.</p>` : ''}
     <div class="stats">
       <div><small>APR</small><b>${m.rate}%</b></div>
-      <div><small>Regen / mo</small><b>${fmt(m.monthly)}</b></div>
+      <div><small>Interest / mo</small><b>${fmt(m.monthly)}</b></div>
       <div><small>Minimum</small><b>${fmt(m.minPayment)}</b></div>
       <div><small>Due day</small><b>${m.dueDay}</b></div>
-      <div><small>Damage dealt</small><b>${fmt(paid)}</b></div>
-      <div><small>Interest healed</small><b>${fmt(interest)}</b></div>
+      <div><small>Paid so far</small><b>${fmt(paid)}</b></div>
+      <div><small>Interest added</small><b>${fmt(interest)}</b></div>
     </div>
     <div class="row-buttons">
-      ${m.alive ? '<button class="btn primary" data-action="attack">Attack (pay)</button>' : ''}
+      ${m.alive ? '<button class="btn primary" data-action="attack">Pay</button>' : ''}
       <button class="btn" data-action="scout">Update balance</button>
       ${m.alive ? '<button class="btn" data-action="plan">Plan a payment</button>' : ''}
       <button class="btn" data-action="charge">+ Charge</button>
@@ -1514,7 +1611,7 @@ function openDebt(id, hit = 0) {
         return editLedgerEntry(state.ledger.find((e) => e.id === el.dataset.id));
       }
       close();
-      if (action === 'attack') logDebtEntry('payment', m.id, true);
+      if (action === 'attack') payMonster(m.id);
       if (action === 'charge') logDebtEntry('charge', m.id, true);
       if (action === 'scout') scoutDebt(m);
       if (action === 'plan') debtPaymentForm(null, m.id);
@@ -2605,7 +2702,7 @@ function enableSwipe() {
     t0 = Date.now();
   }, { passive: true });
   view.addEventListener('touchend', (e) => {
-    if (document.querySelector('dialog[open]') || e.target.closest('.chart, input, select')) return;
+    if (document.querySelector('dialog[open]') || e.target.closest('.chart, input, select, .b-stage-wrap')) return;
     const t = e.changedTouches[0];
     const dx = t.clientX - sx;
     const dy = t.clientY - sy;
@@ -2625,6 +2722,7 @@ async function boot() {
   checkAchievements();
   document.addEventListener('click', onClick);
   document.addEventListener('change', onChange);
+  document.addEventListener('keydown', battleKey);
   window.addEventListener('hashchange', render);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') hiddenAt = Date.now();

@@ -12,16 +12,23 @@ export function esc(s) {
 const toastQueue = [];
 let toastTimerQ = null;
 let showingImportant = false;
+let held = false;
+/** Hold toasts back (e.g. while an attack plays on the battle stage); they show in order once released. */
+export function holdToasts(on) {
+  held = on;
+  if (!on && !showingImportant) nextToast();
+}
 export function toast(msg, kind = '') {
   for (let i = toastQueue.length - 1; i >= 0; i--) if (!toastQueue[i][1]) toastQueue.splice(i, 1);
   toastQueue.push([msg, kind]);
-  if (!showingImportant) {
+  if (!showingImportant && !held) {
     clearTimeout(toastTimerQ);
     nextToast();
   }
 }
 
 function nextToast() {
+  if (held) return void (showingImportant = false);
   const item = toastQueue.shift();
   if (!item) return void (showingImportant = false);
   showingImportant = !!item[1];
