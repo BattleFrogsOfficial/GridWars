@@ -642,3 +642,34 @@ dialog.sheet {
 .pay-choice.primary { background: #f2b632; color: #3a1d00;
   box-shadow: 0 -3px 0 #2b1600, 0 3px 0 #2b1600, -3px 0 0 #2b1600, 3px 0 0 #2b1600, inset 0 4px 0 #ffe08a, inset 0 -5px 0 #b86e12; }
 .pay-choice b { text-transform: uppercase; letter-spacing: 0.06em; font-size: 15px; }
+
+/* ---------- victory: every debt paid off ---------- */
+.v-head { position: absolute; left: 0; right: 0; top: calc(env(safe-area-inset-top, 0px) + 22px); text-align: center; pointer-events: none; }
+.v-title {
+  font-size: min(15vw, 64px); font-weight: 900; font-style: italic; line-height: 1; text-transform: uppercase; letter-spacing: 0.02em;
+  color: #ffe23a; -webkit-text-stroke: 3px #2b1600; paint-order: stroke fill;
+  text-shadow: 0 5px 0 #2b1600, 0 0 24px rgba(255, 200, 60, 0.8), 0 0 50px rgba(255, 120, 40, 0.5);
+  animation: v-in 1s cubic-bezier(.2, 1.5, .4, 1) both, v-bob 3s ease-in-out 1s infinite;
+}
+.v-sub { margin-top: 10px; font-size: 18px; font-weight: 900; color: #fff; text-shadow: 0 2px 0 #000, 0 0 8px rgba(0, 0, 0, 0.5); animation: v-fade 0.6s 0.5s both; }
+.v-paid { margin-top: 4px; font-size: 15px; font-weight: 800; color: #fff; text-shadow: 0 2px 0 #000; font-variant-numeric: tabular-nums; animation: v-fade 0.6s 0.8s both; }
+.v-paid em { font-style: normal; color: #ffe23a; font-weight: 900; }
+@keyframes v-in { 0% { opacity: 0; transform: scale(2.6) rotate(-6deg); } 60% { opacity: 1; transform: scale(0.94) rotate(-3deg); } 100% { transform: scale(1) rotate(-3deg); } }
+@keyframes v-bob { 50% { transform: scale(1.04) rotate(-3deg); } 0%, 100% { transform: scale(1) rotate(-3deg); } }
+@keyframes v-fade { from { opacity: 0; transform: translateY(8px); } }
+.v-bottom { position: absolute; left: 0; right: 0; bottom: 18px; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.v-shelf {
+  width: min(calc(100% - 32px), 360px); padding: 8px 10px 10px; text-align: center;
+  background: rgba(12, 16, 38, 0.88);
+  box-shadow: 0 -3px 0 #05060f, 0 3px 0 #05060f, -3px 0 0 #05060f, 3px 0 0 #05060f, inset 0 3px 0 rgba(255, 255, 255, 0.1), inset 0 -3px 0 rgba(0, 0, 0, 0.35);
+}
+.v-shelf-h { font-size: 11px; font-weight: 900; letter-spacing: 0.12em; text-transform: uppercase; color: #ffe23a; margin-bottom: 6px; }
+.v-trophies { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.v-trophies canvas { width: 48px; height: 48px; image-rendering: pixelated; }
+.v-add {
+  border: 0; border-radius: 0; min-height: 30px; padding: 0 14px; font: inherit; font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.08em; cursor: pointer;
+  color: #dfe6ff; background: #2c3766;
+  box-shadow: 0 -3px 0 #05060f, 0 3px 0 #05060f, -3px 0 0 #05060f, 3px 0 0 #05060f, inset 0 3px 0 #4a5a9a, inset 0 -3px 0 #161d40;
+}
+.v-add:focus-visible { outline: 3px solid #fff; outline-offset: 5px; }
+@media (prefers-reduced-motion: reduce) { .v-title, .v-sub, .v-paid { animation: none; } .v-title { transform: rotate(-3deg); } }

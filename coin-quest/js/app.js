@@ -22,7 +22,7 @@ import { loadState, saveState, requestPersistence, downloadBackup, readBackup, h
 import { drawSprite } from './sprites.js';
 import { MODELS, renderModel, renderPortrait, damageLevel } from './models.js';
 import { esc, toast, holdToasts, openSheet, openForm, askConfirm } from './ui.js';
-import { battleMarkup, mountBattle, playAttack, battleKey, attackPower, drawDiorama } from './battle.js';
+import { battleMarkup, mountBattle, playAttack, battleKey, attackPower, drawDiorama, victoryMarkup, mountVictory } from './battle.js';
 import { lineChart, attachCharts, SERIES_COLORS } from './chart.js';
 import { ACCOUNT_TYPES, accountEvents, accountBalances, totalsByType, accountActivity } from './accounts.js';
 import { moneyTimeline } from './projection.js';
@@ -769,9 +769,9 @@ function battleView() {
   const dead = ms.filter((m) => !m.alive);
   return `
     <h1 class="sr-only">Battle</h1>
-    ${active.length ? battleMarkup() : `
+    ${active.length ? battleMarkup() : dead.length ? victoryMarkup() : `
       <section class="card empty-card battle-empty">
-        <p>${dead.length ? 'Every monster is defeated. Well fought!' : 'No monsters yet. Each debt you add appears here as a monster.'}</p>
+        <p>No monsters yet. Each debt you add appears here as a monster.</p>
         <div class="row-buttons"><button class="btn primary" data-action="add-debt">Add a debt</button>
         ${state.settings.setupDone ? '' : '<button class="btn" data-action="goto" data-tab="setup">Set up your account</button>'}</div>
       </section>`}`;
@@ -1249,7 +1249,15 @@ function render() {
   }
   paintSprites(view);
   attachCharts(view);
-  if (r === 'battle') mountBattle(document.getElementById('b-stage'), battleFighters(), fmt, { onPay: payMonster, onDetails: (id) => openDebt(id) });
+  if (r === 'battle') {
+    mountBattle(document.getElementById('b-stage'), battleFighters(), fmt, { onPay: payMonster, onDetails: (id) => openDebt(id) });
+    const beaten = monsters().filter((m) => !m.alive);
+    mountVictory(document.getElementById('b-victory'), {
+      count: beaten.length,
+      total: state.ledger.reduce((t, e) => t + (e.kind === 'payment' ? -e.amount : 0), 0),
+      trophies: beaten.map(fighterOf),
+    }, fmt);
+  }
   window.scrollTo(0, scrollY);
   lastRoute = r;
 }

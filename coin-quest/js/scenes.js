@@ -275,3 +275,103 @@ export function renderShield(w = 48, h = 44) {
   outline(buf);
   return buf;
 }
+
+// ---------- the victory backdrop: shown when every debt is paid off ----------
+
+/**
+ * A sunrise over a peaceful valley with a treasure hill, in two layers so fireworks can burst between them:
+ * sky (gradient, sun, clouds) and land (mountains, meadow, path, the treasure mound; transparent above).
+ * hy is the horizon row, groundY where the treasure sits. Returns { sky, land, sun: { x, y, r } }.
+ */
+export function renderVictory(w, h, hy, groundY) {
+  const mk = () => ({ w, h, data: new Uint8ClampedArray(w * h * 4) });
+  const sky = mk(), land = mk();
+  const put = (buf, x, y, c) => {
+    x = Math.round(x); y = Math.round(y);
+    if (x < 0 || y < 0 || x >= w || y >= h) return;
+    const o = (y * w + x) * 4;
+    buf.data[o] = c[0]; buf.data[o + 1] = c[1]; buf.data[o + 2] = c[2]; buf.data[o + 3] = 255;
+  };
+  const mix = (a, b, f) => [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+  const stops = ['#1c1240', '#4a1f5e', '#9a3462', '#e0603a', '#ffa83c', '#ffe08a'].map(shex);
+  for (let y = 0; y < h; y++) {
+    const f = Math.min(1, y / hy) * (stops.length - 1);
+    for (let x = 0; x < w; x++) {
+      const i = Math.floor(f), fr = f - i;
+      put(sky, x, y, stops[Math.min(stops.length - 1, i + (fr > bayer(x, y) ? 1 : 0))]);
+    }
+  }
+  // a few early stars at the top
+  for (let y = 0; y < hy * 0.3; y++) for (let x = 0; x < w; x++) if (hash2(x, y, 4) > 0.988) put(sky, x, y, [255, 240, 220]);
+  // the rising sun with a dithered glow
+  const sun = { x: w / 2, y: hy - h * 0.1, r: Math.max(14, w * 0.17) };
+  for (let y = Math.floor(sun.y - sun.r * 2.4); y < Math.min(h, sun.y + sun.r * 2.4); y++) for (let x = Math.floor(sun.x - sun.r * 2.4); x < sun.x + sun.r * 2.4; x++) {
+    const d = Math.hypot(x - sun.x, y - sun.y);
+    if (d < sun.r) put(sky, x, y, d < sun.r * 0.75 ? [255, 252, 232] : [255, 240, 176]);
+    else if (d < sun.r * 2.4 && (1 - (d - sun.r) / (sun.r * 1.4)) * 0.6 > bayer(x, y)) {
+      const o = (y * w + x) * 4;
+      put(sky, x, y, mix([sky.data[o], sky.data[o + 1], sky.data[o + 2]], [255, 226, 150], 0.45));
+    }
+  }
+  // long clouds lit pink and gold from below
+  for (const [cy, cx, len, seed] of [[hy * 0.32, w * 0.22, w * 0.5, 1], [hy * 0.5, w * 0.78, w * 0.45, 2], [hy * 0.7, w * 0.3, w * 0.6, 3]]) {
+    for (let x = Math.floor(cx - len / 2); x < cx + len / 2; x++) {
+      const t = (x - (cx - len / 2)) / len;
+      const th = Math.max(0, Math.sin(Math.PI * t)) * (3 + 3 * noise1(x * 0.15, seed));
+      for (let y = Math.floor(cy - th); y <= cy + 1; y++) put(sky, x, y, y >= cy ? [255, 190, 120] : y > cy - th * 0.5 ? [232, 120, 130] : [150, 70, 120]);
+    }
+  }
+  // far mountains: violet with gold rims where the sun catches them
+  for (let x = 0; x < w; x++) {
+    const r1 = hy - Math.round(h * (0.05 + 0.09 * noise1(x * 0.045, 7)) + h * 0.02 * noise1(x * 0.2, 8));
+    for (let y = r1; y < hy; y++) put(land, x, y, y < r1 + 1 ? [255, 196, 110] : [96, 52, 110]);
+    const r2 = hy - Math.round(h * (0.015 + 0.035 * noise1(x * 0.08 + 30, 9)));
+    for (let y = r2; y < hy; y++) put(land, x, y, y < r2 + 1 ? [255, 160, 90] : [62, 36, 84]);
+  }
+  // meadow in perspective with a golden path toward the treasure, flowers, and the light of the sunrise
+  const grass = ['#3f8f3c', '#357a35', '#2a6630'].map(shex), pathC = shex('#e8c060'), pathD = shex('#c89a3a');
+  for (let y = hy; y < h; y++) {
+    const dz = y - hy + 1;
+    for (let x = 0; x < w; x++) {
+      const xw = ((x - w / 2) / dz) * 5;
+      const onPath = Math.abs(xw) < 3.2 && y > groundY - 2;
+      const band = Math.floor(40 / dz + xw * 0.3) & 1;
+      let c = onPath ? (band ? pathC : pathD) : grass[Math.min(2, Math.floor((y - hy) / ((h - hy) / 3)))];
+      if (!onPath && band && bayer(x, y) > 0.6) c = mix(c, [120, 190, 90], 0.35);
+      const glow = Math.max(0, 1 - dz / (h * 0.12));
+      if (glow > bayer(x, y)) c = mix(c, [255, 210, 130], 0.5);
+      if (!onPath && hash2(x, y, 11) > 0.985 && y > hy + 4) c = hash2(y, x, 3) > 0.5 ? [255, 230, 120] : [255, 150, 190];
+      put(land, x, y, c);
+    }
+  }
+  // the treasure mound: a little green hill under the chest
+  for (let y = groundY - 9; y < groundY + 6; y++) for (let x = Math.floor(w / 2 - 44); x < w / 2 + 44; x++) {
+    const u = (x - w / 2) / 44, top = groundY - 9 * (1 - u * u);
+    if (Math.abs(u) <= 1 && y >= top) put(land, x, y, y < top + 1 ? [120, 200, 96] : (bayer(x, y) > 0.5 ? grass[0] : grass[1]));
+  }
+  // a gold coin heap around where the chest stands
+  for (let y = groundY - 9; y < groundY + 3; y++) for (let x = Math.floor(w / 2 - 32); x < w / 2 + 32; x++) {
+    const u = (x - w / 2) / 32, top = groundY - 1 - 8 * (1 - u * u);
+    if (Math.abs(u) <= 1 && y >= top) put(land, x, y, y < top + 1 ? [255, 236, 150] : (x + y) % 3 === 0 ? [200, 140, 30] : [240, 184, 52]);
+  }
+  // the open treasure chest (drawn at 1.5x the base design so it reads as the centrepiece)
+  const cx = Math.round(w / 2), gy = groundY - 3, S = 1.5;
+  const OUT = [43, 22, 0], WOOD = [122, 74, 34], WOOD_D = [90, 50, 20], GOLD = [224, 160, 32], GOLD_L = [255, 216, 96];
+  const rect = (x0, y0, ww, hh, c) => {
+    for (let y = Math.round(gy + y0 * S); y < Math.round(gy + (y0 + hh) * S); y++) for (let x = Math.round(cx + x0 * S); x < Math.round(cx + (x0 + ww) * S); x++) put(land, x, y, c);
+  };
+  rect(-14, -13, 28, 13, OUT);
+  rect(-13, -12, 26, 11, WOOD);
+  rect(-13, -7, 26, 1, WOOD_D);
+  rect(-9, -12, 3, 11, GOLD); rect(6, -12, 3, 11, GOLD);
+  rect(-2, -9, 4, 5, GOLD_L); rect(-1, -8, 2, 2, OUT);
+  // lid tipped back, and the coins heaped inside catching the light
+  rect(-14, -22, 28, 7, OUT);
+  rect(-13, -21, 26, 5, WOOD_D);
+  rect(-13, -21, 26, 1, GOLD);
+  for (let x = Math.round(cx - 12 * S); x <= Math.round(cx + 12 * S); x++) {
+    const hh = Math.round((2 + 2 * Math.sin(((x - cx + 12 * S) / (24 * S)) * Math.PI)) * S);
+    for (let y = Math.round(gy - 13 * S) - hh; y < Math.round(gy - 12 * S); y++) put(land, x, y, y === Math.round(gy - 13 * S) - hh ? [255, 248, 200] : (x + y) % 3 ? [255, 214, 80] : [230, 160, 30]);
+  }
+  return { sky, land, sun };
+}

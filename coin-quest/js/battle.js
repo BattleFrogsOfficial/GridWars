@@ -4,8 +4,8 @@
 // The app renders the markup (battleMarkup) and calls mountBattle after every render; this module keeps
 // its own state (which monster you're facing, the frame cache, a running attack) across re-renders.
 
-import { MODELS, renderModel, stageGroundRow, damageLevel } from './models.js';
-import { renderScene, HABITATS } from './scenes.js';
+import { MODELS, renderModel, renderPortrait, stageGroundRow, damageLevel } from './models.js';
+import { renderScene, renderVictory, HABITATS } from './scenes.js';
 import { createAttack, attackTier } from './battlefx.js';
 import { esc } from './ui.js';
 
@@ -520,3 +520,167 @@ export function attackPower(cents, peak, balance) {
   const tr = attackTier(cents, peak, balance);
   return { stars: tr.stars, kill: tr.kill, share: tr.share };
 }
+
+// ---------- victory: every debt paid off ----------
+// A sunrise over a treasure hill with fireworks, light rays, confetti and twinkling gold, full screen like
+// the battle, with "Debt free!", the total paid and a shelf of the debts beaten.
+
+const V = { els: null, running: false, fw: [], conf: [], last: 0, born: 0, nextLaunch: 0, layers: null, L: null };
+
+export function victoryMarkup() {
+  return `
+    <section class="b-stage-wrap v-wrap" id="b-victory">
+      <canvas class="b-stage v-stage" role="img" aria-label="Victory: a sunrise over a treasure chest, with fireworks"></canvas>
+      <div class="v-head" role="status">
+        <div class="v-title">Debt free!</div>
+        <div class="v-sub"></div>
+        <div class="v-paid"></div>
+      </div>
+      <div class="v-bottom">
+        <div class="v-shelf"><div class="v-shelf-h">Trophies</div><div class="v-trophies"></div></div>
+        <button class="v-add" type="button" data-action="add-debt">Add a debt</button>
+      </div>
+    </section>`;
+}
+
+/** info: { count, total, trophies: [fighter] } */
+export function mountVictory(root, info, fmt) {
+  if (!root) return;
+  const stage = root.querySelector('.v-stage');
+  V.els = { root, stage, g: stage.getContext('2d') };
+  root.querySelector('.v-sub').textContent = info.count === 1 ? 'You beat your debt.' : `You beat all ${info.count} debts.`;
+  root.querySelector('.v-paid').innerHTML = `Total paid: <em>${esc(fmt(info.total))}</em>`;
+  const shelf = root.querySelector('.v-trophies');
+  shelf.innerHTML = '';
+  for (const m of info.trophies) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 56;
+    c.title = m.name;
+    c.setAttribute('role', 'img');
+    c.setAttribute('aria-label', `${m.name}, paid off`);
+    c.getContext('2d').putImageData(new ImageData(renderPortrait(m.type, m.temper, { size: 56 }).data, 56, 56), 0, 0);
+    shelf.appendChild(c);
+  }
+  victoryLayout();
+  if (!V.running) {
+    V.running = true;
+    V.last = V.born = performance.now();
+    V.nextLaunch = 0;
+    V.fw = [];
+    V.conf = [];
+    requestAnimationFrame(victoryLoop);
+  }
+}
+
+function victoryLayout() {
+  const e = V.els;
+  const r = e.root.getBoundingClientRect();
+  if (!r.width || !r.height) return;
+  const k = Math.max(1.5, Math.min(r.width - 32, 460, (r.height - 24) * SW / SH) / SW);
+  const cw = Math.ceil(r.width / k), ch = Math.ceil(r.height / k);
+  const bottom = e.root.querySelector('.v-bottom');
+  const ground = ch - Math.ceil(((bottom ? r.height - bottom.offsetTop : 160) + 26) / k);
+  const hy = Math.max(Math.round(ch * 0.38), ground - 34);
+  const key = `${cw}|${ch}|${hy}|${ground}`;
+  if (!V.layers || V.layers.key !== key) {
+    const v = renderVictory(cw, ch, hy, ground);
+    V.layers = { key, sky: toCanvas(v.sky), land: toCanvas(v.land), sun: v.sun };
+  }
+  V.L = { cw, ch, k, hy, ground };
+  e.stage.width = cw; e.stage.height = ch;
+  const top = r.height - ch * k;
+  Object.assign(e.stage.style, { width: `${cw * k}px`, height: `${ch * k}px`, left: `${(r.width - cw * k) / 2}px`, top: `${top}px`, transform: '' });
+}
+
+const FW_COLORS = [['#fff6c0', '#ffd040', '#ff9a20'], ['#ffffff', '#ff8ac8', '#d0408a'], ['#ffffff', '#8af0ff', '#3a9ad0'], ['#ffffff', '#b8ff8a', '#4ab040']];
+const CONF = ['#ffd040', '#ff6a8a', '#6ad0ff', '#b8ff8a', '#ffffff', '#ff9a20'];
+
+function victoryLoop(now) {
+  const e = V.els;
+  if (!e || !document.body.contains(e.stage)) { V.running = false; return; }
+  const dt = Math.min(0.05, (now - V.last) / 1000);
+  V.last = now;
+  const t = (now - V.born) / 1000;
+  const { cw, ch, hy, ground } = V.L;
+  const g = e.g;
+  const px = (x, y, c, a = 1) => { g.globalAlpha = a; g.fillStyle = c; g.fillRect(Math.round(x), Math.round(y), 1, 1); };
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  g.imageSmoothingEnabled = false;
+  g.globalAlpha = 1;
+  g.drawImage(V.layers.sky, 0, 0);
+  // slowly turning rays of light from the sun
+  const sun = V.layers.sun;
+  const spin = reduced ? 0 : t * 0.12;
+  g.fillStyle = '#fff0b0';
+  for (let y = 0; y < hy; y += 1) for (let x = 0; x < cw; x += 1) {
+    const dx = x - sun.x, dy = y - sun.y, d = Math.hypot(dx, dy);
+    if (d < sun.r * 1.05) continue;
+    const a = Math.atan2(dy, dx) + spin;
+    const ray = Math.cos(a * 9);
+    const fall = 1 - d / (cw * 1.1);
+    if (ray > 0.55 && fall * (ray - 0.55) * 2.2 > FX_B[(y & 3) * 4 + (x & 3)]) { g.globalAlpha = 0.35; g.fillRect(x, y, 1, 1); }
+  }
+  g.globalAlpha = 1;
+  // fireworks: rockets rise from behind the hills and burst; a flurry when the screen first opens
+  if (!reduced && t >= V.nextLaunch) {
+    V.nextLaunch = t + (t < 3 ? 0.35 : 0.7 + Math.random() * 0.9);
+    const x = cw * (0.15 + Math.random() * 0.7);
+    V.fw.push({ kind: 'rocket', x, y: hy, vy: -(55 + Math.random() * 30), ty: ch * (0.1 + Math.random() * 0.25), col: FW_COLORS[Math.floor(Math.random() * FW_COLORS.length)] });
+  }
+  for (let i = V.fw.length - 1; i >= 0; i--) {
+    const f = V.fw[i];
+    if (f.kind === 'rocket') {
+      f.y += f.vy * dt;
+      px(f.x, f.y, '#fff0c0'); px(f.x, f.y + 1, '#ffb040', 0.7); px(f.x, f.y + 2, '#ff7a20', 0.4);
+      if (f.y <= f.ty) {
+        V.fw.splice(i, 1);
+        const n = 34 + Math.floor(Math.random() * 18), sp = 26 + Math.random() * 18;
+        for (let k = 0; k < n; k++) {
+          const a = (k / n) * Math.PI * 2 + Math.random() * 0.2, v = sp * (0.6 + Math.random() * 0.5);
+          V.fw.push({ kind: 'spark', x: f.x, y: f.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 1.1 + Math.random() * 0.6, age: 0, col: f.col });
+        }
+      }
+      continue;
+    }
+    f.age += dt;
+    if (f.age > f.life) { V.fw.splice(i, 1); continue; }
+    f.vx *= 1 - 1.6 * dt; f.vy = f.vy * (1 - 1.6 * dt) + 18 * dt;
+    f.x += f.vx * dt; f.y += f.vy * dt;
+    const k = f.age / f.life;
+    px(f.x, f.y, f.col[Math.min(2, Math.floor(k * 3))], k > 0.7 ? (1 - k) / 0.3 : 1);
+    if (k < 0.4) px(f.x - f.vx * 0.03, f.y - f.vy * 0.03, f.col[1], 0.5);
+  }
+  g.globalAlpha = 1;
+  g.drawImage(V.layers.land, 0, 0);
+  // the victory flag on the treasure hill
+  const fx = Math.round(cw / 2) + 30, fy = ground - 50;
+  for (let y = fy; y < ground - 4; y++) { px(fx, y, '#d8d8e8'); px(fx + 1, y, '#8a8aa0'); }
+  px(fx, fy - 1, '#ffd040'); px(fx + 1, fy - 1, '#ffd040');
+  for (let x = 0; x < 14; x++) {
+    const wv = reduced ? 0 : Math.round(Math.sin(t * 6 - x * 0.6) * 1.2 * (x / 14));
+    for (let y = 0; y < 9; y++) px(fx + 2 + x, fy + y + wv, y === 0 || y === 8 ? '#b86e12' : y > 2 && y < 6 ? '#e04848' : '#ffd040');
+  }
+  // twinkles on the gold
+  if (!reduced) for (let i = 0; i < 4; i++) {
+    const x = cw / 2 + (Math.random() - 0.5) * 56, y = ground - 3 - Math.random() * 22;
+    px(x, y, '#ffffff'); px(x - 1, y, '#fff6c0', 0.6); px(x + 1, y, '#fff6c0', 0.6); px(x, y - 1, '#fff6c0', 0.6); px(x, y + 1, '#fff6c0', 0.6);
+  }
+  // confetti drifting down
+  if (!reduced) {
+    while (V.conf.length < 46) V.conf.push({ x: Math.random() * cw, y: -Math.random() * ch * (V.conf.length < 20 && t < 0.5 ? 1 : 0.1), vy: 12 + Math.random() * 16, p: Math.random() * 6.28, c: CONF[Math.floor(Math.random() * CONF.length)] });
+    for (let i = V.conf.length - 1; i >= 0; i--) {
+      const q = V.conf[i];
+      q.y += q.vy * dt;
+      q.x += Math.sin(t * 2 + q.p) * 0.25;
+      if (q.y > ch) { V.conf.splice(i, 1); continue; }
+      g.globalAlpha = 1;
+      g.fillStyle = q.c;
+      if (Math.sin(t * 8 + q.p) > 0) g.fillRect(Math.round(q.x), Math.round(q.y), 2, 1);
+      else g.fillRect(Math.round(q.x), Math.round(q.y), 1, 2);
+    }
+  }
+  g.globalAlpha = 1;
+  requestAnimationFrame(victoryLoop);
+}
+
+addEventListener('resize', () => { if (V.els && document.body.contains(V.els.stage)) victoryLayout(); });
