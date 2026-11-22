@@ -421,7 +421,8 @@ const STAGE = { ty: 1.75, camY: 2.25, dist: 10.5 };
 
 /**
  * Render a monster to an RGBA pixel buffer.
- * opts: { w, h, yaw (radians, turns the model), t (seconds, idle animation), framing: 'full'|'portrait', shadow }
+ * opts: { w, h, yaw (radians, turns the model), t (seconds, idle animation), framing: 'full'|'portrait', shadow,
+ *   shadowOnly (just the ground shadow, so it can be drawn apart from the moving model) }
  * Returns { w, h, data: Uint8ClampedArray } with transparent background (plus a soft ground shadow).
  */
 export function renderModel(type, temper = 'angry', opts = {}) {
@@ -497,7 +498,7 @@ export function renderModel(type, temper = 'angry', opts = {}) {
       const disc = bb * bb - cc;
       const idx = j * w + i;
       let hit = false, tt = 0;
-      if (disc > 0) {
+      if (disc > 0 && !opts.shadowOnly) {
         tt = Math.max(0, -bb - Math.sqrt(disc));
         const tEnd = -bb + Math.sqrt(disc);
         for (let s = 0; s < 90 && tt < tEnd; s++) {

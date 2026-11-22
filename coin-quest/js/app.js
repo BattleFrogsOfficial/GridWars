@@ -702,6 +702,7 @@ function fighterOf(m) {
   return {
     id: m.id, name: m.name, type: m.species.key, temper: m.temper.key, temperName: m.temper.name, speciesName: m.species.name,
     rate: m.rate, balance: m.balance, peak: m.maxHp, boss: m.boss, warn: warn[0], warnBad: warn[1],
+    start: m.startBalance, paid: state.ledger.reduce((t, e) => t + (e.debtId === m.id && e.kind === 'payment' ? -e.amount : 0), 0),
   };
 }
 const fightOrder = (a, b) => (b.boss - a.boss) || b.balance - a.balance;

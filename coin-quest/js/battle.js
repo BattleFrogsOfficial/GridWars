@@ -4,7 +4,7 @@
 // The app renders the markup (battleMarkup) and calls mountBattle after every render; this module keeps
 // its own state (which monster you're facing, the frame cache, a running attack) across re-renders.
 
-import { MODELS, renderModel, renderPortrait, stageGroundRow, damageLevel } from './models.js';
+import { MODELS, renderModel, stageGroundRow, damageLevel } from './models.js';
 import { renderScene, HABITATS } from './scenes.js';
 import { createAttack, attackTier } from './battlefx.js';
 import { esc } from './ui.js';
@@ -47,7 +47,7 @@ function pump() {
     const t0 = performance.now();
     while (queue.length && performance.now() - t0 < 30) {
       const q = queue.shift();
-      if (!frames.has(q.k)) frames.set(q.k, toCanvas(renderModel(q.m.type, q.m.temper, { w: SW, h: SH, framing: 'stage', t: q.t, damage: q.dmg })));
+      if (!frames.has(q.k)) frames.set(q.k, toCanvas(renderModel(q.m.type, q.m.temper, { w: SW, h: SH, framing: 'stage', t: q.t, damage: q.dmg, shadow: false })));
     }
     if (queue.length) setTimeout(step, 0);
     else pumping = false;
@@ -65,6 +65,19 @@ function frameFor(m, time) {
     } else if (frames.has(fkey(m, lvl, 0.4))) return frames.get(fkey(m, lvl, 0.4));
   }
   return frames.get(fkey(m, w, flyer(m) ? FLAP[0] : 0.4)) || null;
+}
+// The ground shadow is drawn on its own, so it stays put while the monster bobs, squishes or is knocked back.
+const shadows = new Map();
+function shadowOf(type) {
+  if (!shadows.has(type)) shadows.set(type, toCanvas(renderModel(type, 'calm', { w: SW, h: SH, framing: 'stage', shadowOnly: true })));
+  return shadows.get(type);
+}
+function drawShadow(g, m, x, turn, alpha = 1) {
+  const sx = 1 - 0.42 * Math.min(1, turn);
+  const w = Math.round(SW * sx);
+  g.globalAlpha = alpha;
+  g.drawImage(shadowOf(m.type), Math.round(L.ox + x + (SW - w) / 2), L.oy, w, SH);
+  g.globalAlpha = 1;
 }
 const whiteCache = new WeakMap();
 function whiteOf(cv) {
@@ -84,12 +97,6 @@ function sceneOf(type) {
   const k = `${type}|${L.cw}|${L.ch}|${L.hy}`;
   if (!sceneCache.has(k)) sceneCache.set(k, toCanvas(renderScene(type, L.cw, L.ch, { hy: L.hy })));
   return sceneCache.get(k);
-}
-const portraitCache = new Map();
-function portraitOf(m) {
-  const k = `${m.type}|${m.temper}|${dmgOf(m)}`;
-  if (!portraitCache.has(k)) portraitCache.set(k, toCanvas(renderPortrait(m.type, m.temper, { size: 56, damage: dmgOf(m) })));
-  return portraitCache.get(k);
 }
 
 /** Bounding box, main colours and sample pixel positions of a rendered frame (for the attack's debris). */
@@ -195,13 +202,19 @@ function compose(g, offset, time) {
     const dim = A.dim();
     if (dim > 0.01) { g.globalAlpha = dim; g.fillStyle = '#05030c'; g.fillRect(0, 0, L.cw, L.ch); g.globalAlpha = 1; }
     A.drawBack(g);
-    drawMonster(g, m, B.atk.frame, 0, 0, time, { xf: A.monster(), box: B.atk.box });
+    const xf = A.monster();
+    drawShadow(g, m, 0, 0, 1 - xf.dissolve);
+    drawMonster(g, m, B.atk.frame, 0, 0, time, { xf, box: B.atk.box });
     A.drawFront(g);
     return;
   }
   const a = Math.abs(offset);
-  drawMonster(g, m, frameFor(m, time), shift * 1.1, a * 1.6, time);
-  if (offset && n) drawMonster(g, n, frameFor(n, time), dir * L.cw * 0.9 * Math.pow(1 - a, 1.6), (1 - a) * 1.4, time);
+  const fm = frameFor(m, time);
+  if (fm) { drawShadow(g, m, shift * 1.1, a * 1.6); drawMonster(g, m, fm, shift * 1.1, a * 1.6, time); }
+  if (offset && n) {
+    const fn = frameFor(n, time), nx = dir * L.cw * 0.9 * Math.pow(1 - a, 1.6);
+    if (fn) { drawShadow(g, n, nx, (1 - a) * 1.4); drawMonster(g, n, fn, nx, (1 - a) * 1.4, time); }
+  }
 }
 
 // ---------- the HUD ----------
@@ -209,21 +222,16 @@ function hudHtml(m) {
   const fmt = B.fmt;
   const pct = Math.max(0, Math.min(100, (Math.max(0, m.balance) / m.peak) * 100));
   return `
-    <canvas width="56" height="56" aria-hidden="true"></canvas>
-    <div class="grow">
-      <div class="b-name">${esc(m.name)}${m.boss ? '<span class="badge boss">Boss</span>' : ''}</div>
-      <small>${esc(m.temperName)} ${esc(m.speciesName)} · ${m.rate}% APR</small>
-      <div class="b-purse"><span class="b-coin" aria-hidden="true">$</span><div class="b-bar" role="meter" aria-label="Still owed" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pct)}" aria-valuetext="${fmt(Math.max(0, m.balance))} owed"><u style="width:${pct}%"></u><i style="width:${pct}%"></i>${m.boss ? [75, 50, 25].map((p) => `<span class="ph" style="left:${p}%"></span>`).join('') : ''}<b>${fmt(Math.max(0, m.balance))} owed</b></div></div>
-      <div class="b-paid"><span>Paid <em>${fmt(m.peak - Math.max(0, m.balance))}</em> of ${fmt(m.peak)}</span><span>${Math.round(100 - pct)}%</span></div>
-      ${m.warn ? `<small class="b-warn ${m.warnBad ? 'bad' : ''}">${esc(m.warn)}</small>` : ''}
-    </div>`;
+    <div class="b-name">${esc(m.name)}</div>
+    <div class="b-sub">${m.rate}% APR · Started at ${fmt(m.start)}</div>
+    <div class="b-bar" role="meter" aria-label="Still owed" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pct)}" aria-valuetext="${fmt(Math.max(0, m.balance))} owed"><u style="width:${pct}%"></u><i style="width:${pct}%"></i>${m.boss ? [75, 50, 25].map((p) => `<span class="ph" style="left:${p}%"></span>`).join('') : ''}<b>${fmt(Math.max(0, m.balance))} owed</b></div>
+    <div class="b-paid">Total paid: <em>${fmt(m.paid)}</em></div>`;
 }
 function renderHud() {
   const e = B.els;
   const m = shown();
   if (!e || !m) return;
   e.hud.innerHTML = hudHtml(m);
-  e.hud.querySelector('canvas').getContext('2d').drawImage(portraitOf(m), 0, 0);
   e.dots.innerHTML = B.list.length > 1 ? B.list.map((_, k) => `<i class="${k === B.cur ? 'on' : ''}"></i>`).join('') : '';
   e.dots.style.top = `${e.hud.offsetTop + e.hud.offsetHeight + 8}px`;
   e.stage.setAttribute('aria-label', `${m.name}: ${m.speciesName}, ${B.fmt(Math.max(0, m.balance))} owed`);
@@ -240,7 +248,7 @@ function setBar(m, balance, drainSec, ghostDelay) {
   bar.setAttribute('aria-valuenow', Math.round(pct));
   bar.setAttribute('aria-valuetext', `${B.fmt(Math.max(0, balance))} owed`);
   const paid = B.els.hud.querySelector('.b-paid');
-  if (paid) paid.innerHTML = `<span>Paid <em>${B.fmt(m.peak - Math.max(0, balance))}</em> of ${B.fmt(m.peak)}</span><span>${Math.round(100 - pct)}%</span>`;
+  if (paid) paid.innerHTML = `Total paid: <em>${B.fmt(m.paid + Math.max(0, m.balance - balance))}</em>`;
 }
 
 // ---------- markup and mounting ----------
@@ -263,7 +271,7 @@ export function battleMarkup() {
 
 /**
  * Bring the stage to life after the app renders its markup.
- * fighters: [{ id, name, type, temper, temperName, speciesName, rate, balance, peak, boss, warn, warnBad }]
+ * fighters: [{ id, name, type, temper, speciesName, rate, balance, peak, start, paid, boss }]
  * hooks: { onPay(id), onDetails(id) }
  */
 export function mountBattle(root, fighters, fmt, hooks) {
@@ -333,7 +341,8 @@ function layout() {
   const k = Math.max(1.5, Math.min(r.width - 32, 460, (r.height - 24) * SW / SH) / SW);
   const cw = Math.ceil(r.width / k), ch = Math.ceil(r.height / k);
   const actions = e.root.querySelector('.b-actions');
-  const reserve = Math.ceil(((actions?.offsetHeight || 92) + 44) / k);
+  // everything from the top of Pay down, plus a gap, stays clear of the monster
+  const reserve = Math.ceil(((actions ? r.height - actions.offsetTop : 122) + 22) / k);
   const feet = Math.min(ch - reserve, ch - 6);
   Object.assign(L, { cw, ch, k, ox: Math.round((cw - SW) / 2), oy: feet - GY(), hy: feet - (GY() - Math.round(SH * 0.55)) });
   const c = e.stage;

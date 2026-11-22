@@ -488,41 +488,55 @@ textarea.code { width: 100%; font: 12px/1.4 ui-monospace, Menlo, monospace; colo
 .b-stage:active { cursor: grabbing; }
 .busy .b-stage { cursor: pointer; }
 .b-summon { position: absolute; inset: 0; display: grid; place-items: center; background: #05070f; color: var(--muted); font-weight: 800; }
-.b-hud { position: absolute; left: max(10px, env(safe-area-inset-left, 0px)); right: max(10px, env(safe-area-inset-right, 0px)); top: calc(env(safe-area-inset-top, 0px) + 10px); max-width: 520px; margin: 0 auto; display: flex; gap: 10px; align-items: center; padding: 8px; background: rgba(8, 12, 34, 0.8); border: 2px solid var(--line); border-radius: 14px; transition: opacity 0.35s, transform 0.35s; }
+/* Pixel UI for the battle: square corners, hard 3px outlines and bevels, flat colours (no gradients or
+   soft shadows), so the sign and buttons belong to the same pixel world as the monsters. */
+.b-hud {
+  position: absolute; left: 0; right: 0; top: calc(env(safe-area-inset-top, 0px) + 14px);
+  width: min(calc(100% - 32px), 340px); margin: 0 auto; padding: 10px 14px 9px; text-align: center;
+  background: rgba(12, 16, 38, 0.9);
+  box-shadow: 0 -3px 0 #05060f, 0 3px 0 #05060f, -3px 0 0 #05060f, 3px 0 0 #05060f,
+    inset 0 3px 0 rgba(255, 255, 255, 0.1), inset 0 -3px 0 rgba(0, 0, 0, 0.35);
+  transition: opacity 0.35s, transform 0.35s;
+}
 .b-hud.away { opacity: 0; transform: translateY(-24px); }
-.b-hud canvas { width: 60px; height: 60px; image-rendering: pixelated; flex: none; }
-.b-hud small { font-size: 12px; }
-.b-name { font-weight: 900; font-size: 17px; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.b-name .badge { margin-left: 6px; vertical-align: 2px; }
-.b-warn { margin-top: 2px; font-weight: 800; color: var(--gold); }
-.b-warn.bad { color: var(--bad); }
-.b-purse { position: relative; margin-top: 5px; padding-left: 13px; }
-/* the money bar: green banknotes for what's still owed; the paid part fills with gold coins */
-.b-bar { position: relative; height: 20px; border: 2px solid var(--line); border-radius: 6px; overflow: hidden;
+.b-name { font-weight: 900; font-size: 19px; line-height: 1.15; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 2px 0 #000; }
+.b-sub { margin-top: 2px; font-size: 13px; font-weight: 700; color: #b9c3e6; font-variant-numeric: tabular-nums; }
+/* the bar: green banknotes for what's still owed; the paid part fills with gold coins */
+.b-bar { position: relative; height: 18px; margin: 8px 3px 0; overflow: hidden;
+  box-shadow: 0 -3px 0 #05060f, 0 3px 0 #05060f, -3px 0 0 #05060f, 3px 0 0 #05060f;
   background: radial-gradient(circle at 5px 5px, #ffe27a 0 2px, #e0a020 2px 3px, transparent 3.5px) 0 0 / 9px 9px,
     radial-gradient(circle at 5px 5px, #ffe27a 0 2px, #c98a14 2px 3px, transparent 3.5px) 4px 4px / 9px 9px, #5a3a08; }
 .b-bar > u { position: absolute; left: 0; top: 0; bottom: 0; background: #fff3c4; transition: width 0.6s ease-in; }
-.b-bar > i { position: relative; display: block; height: 100%; border-right: 2px solid #0e3a1e; transition: width 0.5s ease-out;
-  background: repeating-linear-gradient(90deg, transparent 0 13px, rgba(10, 50, 24, 0.55) 13px 14px), linear-gradient(#7ee08e, #3aa55a 45%, #23803e); }
-.b-bar > b { position: absolute; inset: 0; text-align: center; font-size: 12px; line-height: 16px; font-weight: 900; color: #fff; text-shadow: 0 1px 0 #000, 0 0 3px #000; font-variant-numeric: tabular-nums; }
+.b-bar > i { position: relative; display: block; height: 100%; transition: width 0.5s ease-out;
+  background: #3aa55a; box-shadow: inset 0 3px 0 #7ee08e, inset 0 -3px 0 #23803e, inset -2px 0 0 #0e3a1e; }
+.b-bar > b { position: absolute; inset: 0; text-align: center; font-size: 12px; line-height: 18px; font-weight: 900; color: #fff; text-shadow: 0 1px 0 #000, 1px 0 0 #000, -1px 0 0 #000, 0 -1px 0 #000; font-variant-numeric: tabular-nums; }
 .b-bar .ph { position: absolute; top: 0; bottom: 0; width: 2px; background: rgba(0, 0, 0, 0.55); }
-.b-coin { position: absolute; left: 0; top: -2px; z-index: 1; width: 24px; height: 24px; display: grid; place-items: center; border: 2px solid var(--line); border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, #fff3b0, #ffc94a 45%, #c98a14); color: #6a4204; font-size: 13px; font-weight: 900; box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.25); }
-.b-paid { display: flex; justify-content: space-between; gap: 8px; margin-top: 3px; padding-left: 13px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.b-paid { margin-top: 7px; font-size: 12px; font-weight: 700; color: #b9c3e6; font-variant-numeric: tabular-nums; }
 .b-paid em { font-style: normal; color: var(--gold); font-weight: 900; }
 .b-dots { position: absolute; left: 0; right: 0; top: 140px; display: flex; justify-content: center; gap: 6px; pointer-events: none; }
-.b-dots i { width: 8px; height: 8px; border-radius: 2px; background: rgba(255, 255, 255, 0.35); box-shadow: 0 1px 0 rgba(0, 0, 0, 0.5); }
+.b-dots i { width: 6px; height: 6px; background: rgba(255, 255, 255, 0.4); box-shadow: 0 2px 0 rgba(0, 0, 0, 0.5); }
 .b-dots i.on { background: var(--gold); }
-.b-arrow { position: absolute; top: 48%; width: 36px; height: 52px; border: 0; border-radius: 10px; background: rgba(8, 12, 34, 0.5); color: var(--ink); font: inherit; font-size: 26px; font-weight: 900; cursor: pointer; }
-.b-arrow.l { left: 6px; } .b-arrow.r { right: 6px; }
-.b-arrow:focus-visible { outline: 3px solid var(--gold); }
+.b-arrow { position: absolute; top: 46%; width: 34px; height: 44px; border: 0; border-radius: 0; padding: 0; background: rgba(12, 16, 38, 0.75); color: #fff; font: inherit; font-size: 24px; font-weight: 900; line-height: 1; cursor: pointer;
+  box-shadow: 0 -3px 0 #05060f, 0 3px 0 #05060f, -3px 0 0 #05060f, 3px 0 0 #05060f, inset 0 3px 0 rgba(255, 255, 255, 0.1); }
+.b-arrow.l { left: 10px; } .b-arrow.r { right: 10px; }
+.b-arrow:focus-visible { outline: 3px solid var(--gold); outline-offset: 3px; }
 .single .b-arrow { display: none; }
-.b-arrow:disabled, .b-actions .btn:disabled { opacity: 0.45; }
-.b-actions { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); width: min(62%, 240px); display: flex; flex-direction: column; gap: 6px; }
-.b-actions .btn { width: 100%; min-height: 48px; }
-.b-actions [data-b=pay] { font-size: 20px; letter-spacing: 0.04em; }
-.b-actions [data-b=details] { min-height: 38px; font-size: 14px; }
-.b-skip { position: absolute; left: 0; right: 0; text-align: center; bottom: 112px; font-size: 12px; color: rgba(255, 255, 255, 0.6); pointer-events: none; }
+.b-arrow:disabled, .b-actions button:disabled { opacity: 0.45; }
+.b-actions { position: absolute; left: 0; right: 0; bottom: 26px; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.b-actions button { border: 0; border-radius: 0; font: inherit; font-weight: 900; cursor: pointer; text-transform: uppercase; letter-spacing: 0.08em; }
+.b-actions button:focus-visible { outline: 3px solid #fff; outline-offset: 5px; }
+.b-actions [data-b=pay] {
+  width: min(56%, 210px); min-height: 52px; font-size: 20px; color: #3a1d00; background: #f2b632; text-shadow: 0 2px 0 #ffe08a;
+  box-shadow: 0 -3px 0 #2b1600, 0 3px 0 #2b1600, -3px 0 0 #2b1600, 3px 0 0 #2b1600,
+    inset 0 4px 0 #ffe08a, inset 0 -5px 0 #b86e12, 0 7px 0 rgba(0, 0, 0, 0.35);
+}
+.b-actions [data-b=pay]:active:not(:disabled) { transform: translateY(3px); box-shadow: 0 -3px 0 #2b1600, 0 3px 0 #2b1600, -3px 0 0 #2b1600, 3px 0 0 #2b1600, inset 0 4px 0 #b86e12, 0 3px 0 rgba(0, 0, 0, 0.35); }
+.b-actions [data-b=details] {
+  min-height: 30px; padding: 0 14px; font-size: 11px; color: #dfe6ff; background: #2c3766;
+  box-shadow: 0 -3px 0 #05060f, 0 3px 0 #05060f, -3px 0 0 #05060f, 3px 0 0 #05060f, inset 0 3px 0 #4a5a9a, inset 0 -3px 0 #161d40;
+}
+.b-actions [data-b=details]:active:not(:disabled) { transform: translateY(2px); }
+.b-skip { position: absolute; left: 0; right: 0; text-align: center; bottom: 128px; font-size: 12px; color: rgba(255, 255, 255, 0.6); pointer-events: none; }
 .b-banner { position: absolute; left: 0; right: 0; top: max(calc(env(safe-area-inset-top, 0px) + 150px), calc(var(--mon-y) - 90px)); text-align: center; pointer-events: none; font-weight: 900; font-style: italic; letter-spacing: 0.02em; line-height: 1;
   color: #fff4c0; -webkit-text-stroke: 2px #2b1600; paint-order: stroke fill; text-shadow: 0 4px 0 #2b1600, 0 0 18px rgba(255, 190, 60, 0.7); animation: b-slam 1.5s cubic-bezier(.2, 1.4, .4, 1) forwards; }
 .b-banner.s1 { font-size: 26px; font-size: min(7.4vw, 34px); } .b-banner.s2 { font-size: 30px; font-size: min(8.4vw, 39px); } .b-banner.s3 { font-size: 34px; font-size: min(9.5vw, 44px); }
